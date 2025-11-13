@@ -1,0 +1,12 @@
+---
+example.py:__MAIN__:
+  calls:
+    example.py:find_primes_between: 4
+example.py:find_primes_between:
+  called_by:
+    example.py:__MAIN__: 1
+  calls:
+    example.py:is_prime: 1
+example.py:is_prime:
+  called_by:
+    example.py:find_primes_between: 1
