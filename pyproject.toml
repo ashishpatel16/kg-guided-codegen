@@ -1,7 +1,7 @@
 [project]
 name = "kg-guided-codegen"
 version = "0.1.0"
-description = "Add your description here"
+description = "Knowledge graph guided code generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
