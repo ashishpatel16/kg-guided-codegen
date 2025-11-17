@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "crosshair-tool>=0.0.97",
+    "datasets>=4.4.1",
     "matplotlib>=3.10.7",
     "networkx>=3.5",
     "python-call-graph>=2.1.6",
