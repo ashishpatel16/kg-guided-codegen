@@ -74,7 +74,7 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
     return graph
 
 if __name__ == "__main__":
-    example_file = 'example.py'
+    example_file = 'program_analysis/demo.py'
     # build_ast_from_file_tree_sitter(example_file)
 
     print("--- Building Call Graph ---")
@@ -82,8 +82,6 @@ if __name__ == "__main__":
     graph_json = convert_graph_to_json(call_graph)
     print(graph_json)
 
-    dump_to_json("call_graph.json", graph_json)
-
-
+    # dump_to_json("call_graph.json", graph_json)
 
     visualize_call_graph(call_graph)
