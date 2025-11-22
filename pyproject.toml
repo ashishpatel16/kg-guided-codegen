@@ -23,4 +23,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--maxfail=1 --cov=. --cov-report=term-missing"
+addopts = "--maxfail=1 --cov=src"
+testpaths = ["tests"]
+pythonpath = ["src"]

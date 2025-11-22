@@ -1,8 +1,7 @@
 import ast
-import json
 import tree_sitter_python as tspython
 from tree_sitter import Language, Parser, Node
-from file_utils import dump_to_json
+from src.program_analysis.file_utils import dump_to_json
 
 import networkx as nx
 import matplotlib.pyplot as plt

@@ -1,7 +1,6 @@
-import pytest
-from unittest.mock import patch
-from benchmarks.dataset_loader import load_swebench, load_humaneval
+from src.benchmarks.dataset_loader import load_swebench
 from datasets import Dataset
+
 
 def test_load_swebench():
     swe = load_swebench()
