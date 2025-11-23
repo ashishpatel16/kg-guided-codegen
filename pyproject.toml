@@ -9,6 +9,7 @@ dependencies = [
     "datasets>=4.4.1",
     "matplotlib>=3.10.7",
     "networkx>=3.5",
+    "pydantic>=2.12.4",
     "python-call-graph>=2.1.6",
     "python-scalpel>=1.0b0",
     "tree-sitter>=0.25.2",
