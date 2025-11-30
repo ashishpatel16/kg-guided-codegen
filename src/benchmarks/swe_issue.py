@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List, Union
 import json
 
+
 class SWEIssue(BaseModel):
     repo: str
     instance_id: str
@@ -16,7 +17,7 @@ class SWEIssue(BaseModel):
     pass_to_pass: List[str] = Field(alias="PASS_TO_PASS")
     environment_setup_commit: str
 
-    @field_validator('fail_to_pass', 'pass_to_pass', mode='before')
+    @field_validator("fail_to_pass", "pass_to_pass", mode="before")
     @classmethod
     def parse_json_list(cls, v):
         if isinstance(v, str):
