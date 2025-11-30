@@ -1,7 +1,9 @@
 .cursor/
 .idea/
 program_analysis/artifacts
-*/__pycache__/
+__pycache__/
+*.py[cod]
+*$py.class
 artifacts/
 .coverage
 .env
