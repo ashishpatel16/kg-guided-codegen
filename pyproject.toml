@@ -14,6 +14,7 @@ dependencies = [
     "python-scalpel>=1.0b0",
     "tree-sitter>=0.25.2",
     "tree-sitter-python>=0.25.0",
+    "docker>=7.0.0",
 ]
 
 [dependency-groups]

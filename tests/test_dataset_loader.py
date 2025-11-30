@@ -6,4 +6,3 @@ def test_load_swebench():
     swe = load_swebench()
     assert isinstance(swe, Dataset)
     assert len(swe) > 0
-    

@@ -10,17 +10,19 @@ from networkx.readwrite import json_graph
 # with PyCallGraph(output=GraphvizOutput()):
 #     find_primes_between(10, 20)
 
+
 def visualize_call_graph(graph):
     plt.figure(figsize=(8, 6))
     pos = nx.spring_layout(graph)
-    nx.draw(graph, pos, with_labels=True, node_color='lightblue', edge_color='gray')
+    nx.draw(graph, pos, with_labels=True, node_color="lightblue", edge_color="gray")
     plt.show()
+
 
 def convert_graph_to_json(graph: nx.DiGraph) -> dict:
     """Converts a networkx DiGraph to a dictionary with 'nodes' and 'edges' keys."""
     return {
         "nodes": list(graph.nodes()),
-        "edges": [list(edge) for edge in graph.edges()]
+        "edges": [list(edge) for edge in graph.edges()],
     }
 
 
@@ -33,25 +35,32 @@ def build_ast_from_file(file_path: str):
     tree = ast.parse(code)
     return tree
 
+
 def get_function_calls(node: Node, source_code: str):
     calls = []
     if node.type == "call":
-        call_name = source_code[node.start_byte:node.end_byte]
+        call_name = source_code[node.start_byte : node.end_byte]
         calls.append(call_name)
     for child in node.children:
         calls.extend(get_function_calls(child, source_code))
     return calls
 
+
 def find_functions(node: Node, source_code: str, functions: dict, graph: nx.DiGraph):
     if node.type == "function_definition":
-        func_name = source_code[node.child_by_field_name("name").start_byte: node.child_by_field_name("name").end_byte]
+        func_name = source_code[
+            node.child_by_field_name("name")
+            .start_byte : node.child_by_field_name("name")
+            .end_byte
+        ]
         functions[func_name] = node
         graph.add_node(func_name)
     for child in node.children:
         find_functions(child, source_code, functions, graph)
 
+
 def build_call_graph(file_path: str) -> nx.DiGraph:
-    with open(file_path, 'rb') as f:
+    with open(file_path, "rb") as f:
         code = f.read()
 
     source_code = code
@@ -72,8 +81,9 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
 
     return graph
 
+
 if __name__ == "__main__":
-    example_file = 'program_analysis/demo.py'
+    example_file = "program_analysis/demo.py"
     # build_ast_from_file_tree_sitter(example_file)
 
     print("--- Building Call Graph ---")
