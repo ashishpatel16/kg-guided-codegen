@@ -19,6 +19,7 @@ dependencies = [
     "langchain>=1.1.2",
     "langgraph>=1.0.4",
     "langchain-ollama>=1.0.0",
+    "grandalf>=0.8",
 ]
 
 [dependency-groups]
