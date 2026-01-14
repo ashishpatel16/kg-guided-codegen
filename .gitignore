@@ -8,3 +8,6 @@ artifacts/
 .coverage
 .env
 logs/
+datasets/
+docs/
+experiments/

@@ -2,11 +2,15 @@ import requests
 from langchain_ollama import ChatOllama
 from typing import Optional, Dict, Any
 
+
 class OllamaLLMConnector:
     """
     A custom wrapper around LangChain's ChatOllama connector.
     """
-    def __init__(self, model_name: str = "llama3.1", temperature: float = 0.0, **kwargs):
+
+    def __init__(
+        self, model_name: str = "llama3.1", temperature: float = 0.0, **kwargs
+    ):
         """
         Initialize the CustomOllama connector.
 
@@ -17,11 +21,7 @@ class OllamaLLMConnector:
         """
         self.model_name = model_name
         self.temperature = temperature
-        self._model = ChatOllama(
-            model=model_name,
-            temperature=temperature,
-            **kwargs
-        )
+        self._model = ChatOllama(model=model_name, temperature=temperature, **kwargs)
 
     def generate(self, prompt: str) -> str:
         """
@@ -36,11 +36,18 @@ class OllamaLLMConnector:
         response = self._model.invoke(prompt)
         return response.content
 
+
 class RawOllamaConnector:
     """
     A raw HTTP client for connecting to an Ollama instances hosted on cloud directly.
     """
-    def __init__(self, model_name: str = "llama3.1", base_url: str = "http://localhost:11434", temperature: float = 0.0):
+
+    def __init__(
+        self,
+        model_name: str = "llama3.1",
+        base_url: str = "http://localhost:11434",
+        temperature: float = 0.0,
+    ):
         """
         Initialize the RawOllamaConnector.
 
@@ -50,7 +57,7 @@ class RawOllamaConnector:
             temperature (float): The temperature for generation. Defaults to 0.0.
         """
         self.model_name = model_name
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.temperature = temperature
 
     def generate(self, prompt: str) -> str:
@@ -69,21 +76,18 @@ class RawOllamaConnector:
         url = f"{self.base_url}/api/chat"
         payload = {
             "model": self.model_name,
-            "messages": [
-                { "role": "user", "content": prompt }
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {
-                "temperature": self.temperature
-            }
+            "options": {"temperature": self.temperature},
         }
-        
+
         response = requests.post(url, json=payload)
         print(response)
         response.raise_for_status()
-        
+
         data = response.json()
         return data.get("message", {}).get("content", "")
+
 
 if __name__ == "__main__":
     query = """
@@ -91,8 +95,6 @@ if __name__ == "__main__":
     Instructions:
     - Only give me the code, no other text.
     """
-
-
 
     # Demo usage
     print("--- LangChain Connector ---")

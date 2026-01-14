@@ -3,6 +3,7 @@ from langchain.messages import AnyMessage
 from typing_extensions import TypedDict, Annotated
 import operator
 
+
 class Confidence(TypedDict):
     score: float
     reasoning: str
@@ -12,7 +13,7 @@ class Evidence(TypedDict):
     description: str
     reasoning: str
     source_node: str
-    
+
 
 class Hypothesis(TypedDict):
     hypothesis: str
@@ -31,7 +32,7 @@ class OneShotCodeGenState(TypedDict, total=False):
 
     # Output
     generated_code: str
-    
+
     # Intermediates
     hypothesis: str
     evidence: str
