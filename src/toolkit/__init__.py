@@ -8,5 +8,3 @@ are easy to test.
 from .codebase_tools import tool_grep, tool_ls
 
 __all__ = ["tool_grep", "tool_ls"]
-
-

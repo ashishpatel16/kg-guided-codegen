@@ -8,7 +8,13 @@ from llm.connector import OllamaLLMConnector, RawOllamaConnector
 
 logger = logging.getLogger(__name__)
 
-from agent.prompts import DEFAULT_SYSTEM_INSTRUCTIONS, GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS, GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS, EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS, GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS
+from agent.prompts import (
+    DEFAULT_SYSTEM_INSTRUCTIONS,
+    GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS,
+    GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
+    EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
+    GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS,
+)
 
 
 def configure_logging(level: str | None = None) -> None:
@@ -32,7 +38,9 @@ def build_one_shot_prompt(problem: str) -> str:
     {problem}
 
     """
-    logger.debug("Built prompt (problem_chars=%s, prompt_chars=%s)", len(problem), len(prompt))
+    logger.debug(
+        "Built prompt (problem_chars=%s, prompt_chars=%s)", len(problem), len(prompt)
+    )
     return prompt
 
 
@@ -46,7 +54,10 @@ def build_hypothesis_prompt(problem: str) -> str:
     """
     return prompt
 
-_FENCED_CODE_RE = re.compile(r"```(?:[a-zA-Z0-9_+-]+)?\s*([\s\S]*?)\s*```", re.MULTILINE)
+
+_FENCED_CODE_RE = re.compile(
+    r"```(?:[a-zA-Z0-9_+-]+)?\s*([\s\S]*?)\s*```", re.MULTILINE
+)
 
 
 def extract_code(text: str) -> str:
@@ -71,8 +82,11 @@ def extract_code(text: str) -> str:
 
 def get_default_llm_connector(model_name: str = "gemma3:12b", temperature: float = 0.5):
     llm = OllamaLLMConnector(model_name=model_name, temperature=temperature)
-    logger.info("Created LLM connector (model=%s, temperature=%s)", model_name, temperature)
+    logger.info(
+        "Created LLM connector (model=%s, temperature=%s)", model_name, temperature
+    )
     return llm
+
 
 def build_evidence_prompt(problem: str, hypothesis: str, code: str) -> str:
     problem = (problem or "").strip()
@@ -92,7 +106,10 @@ def build_evidence_prompt(problem: str, hypothesis: str, code: str) -> str:
     """
     return prompt
 
-def build_evidence_evaluation_prompt(problem: str, hypothesis: str, evidence: str, code: str) -> str:
+
+def build_evidence_evaluation_prompt(
+    problem: str, hypothesis: str, evidence: str, code: str
+) -> str:
     problem = (problem or "").strip()
     hypothesis = (hypothesis or "").strip()
     evidence = (evidence or "").strip()
@@ -113,6 +130,7 @@ def build_evidence_evaluation_prompt(problem: str, hypothesis: str, evidence: st
 
     """
     return prompt
+
 
 def build_reflection_prompt(problem: str, hypothesis: str, code: str) -> str:
     problem = (problem or "").strip()

@@ -7,7 +7,15 @@ from typing import Any, Dict, List
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.state import OneShotCodeGenState
-from agent.tools import build_hypothesis_prompt, build_one_shot_prompt, extract_code, get_default_llm_connector, build_evidence_prompt, build_evidence_evaluation_prompt, build_reflection_prompt
+from agent.tools import (
+    build_hypothesis_prompt,
+    build_one_shot_prompt,
+    extract_code,
+    get_default_llm_connector,
+    build_evidence_prompt,
+    build_evidence_evaluation_prompt,
+    build_reflection_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +25,7 @@ def generate_code(state: OneShotCodeGenState) -> Dict[str, Any]:
 
     problem = (state.get("problem") or "").strip()
     messages = state.get("messages") or []
-    
+
     if not problem:
         raise ValueError("Problem is required")
 
@@ -88,12 +96,19 @@ def generate_hypothesis(state: OneShotCodeGenState) -> Dict[str, Any]:
         f"generate_hypothesis: done (hypothesis={hypothesis}, duration_ms={duration_ms})",
     )
 
-    return {"hypothesis": hypothesis, "messages": new_messages, "llm_calls": int(state.get("llm_calls") or 0) + 1}
+    return {
+        "hypothesis": hypothesis,
+        "messages": new_messages,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+    }
+
 
 def generate_evidence(state: OneShotCodeGenState) -> Dict[str, Any]:
-    logger.info(f"generate_evidence: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})")
+    logger.info(
+        f"generate_evidence: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})"
+    )
     start_t = time.time()
-    
+
     problem = (state.get("problem") or "").strip()
     hypothesis = (state.get("hypothesis") or "").strip()
     code = (state.get("generated_code") or "").strip()
@@ -101,18 +116,26 @@ def generate_evidence(state: OneShotCodeGenState) -> Dict[str, Any]:
 
     if not problem or not hypothesis or not code:
         raise ValueError("Problem, hypothesis, and code are required")
-    
+
     prompt = build_evidence_prompt(problem, hypothesis, code)
     llm = get_default_llm_connector()
     evidence = llm.generate(prompt)
 
     duration_ms = int((time.time() - start_t) * 1000)
-    logger.info(f"generate_evidence: done (evidence={evidence}, duration_ms={duration_ms})")
-    return {"evidence": evidence, "messages": messages, "llm_calls": int(state.get("llm_calls") or 0) + 1}
+    logger.info(
+        f"generate_evidence: done (evidence={evidence}, duration_ms={duration_ms})"
+    )
+    return {
+        "evidence": evidence,
+        "messages": messages,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+    }
 
 
 def evaluate_evidence(state: OneShotCodeGenState) -> Dict[str, Any]:
-    logger.info(f"evaluate_evidence: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})")
+    logger.info(
+        f"evaluate_evidence: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})"
+    )
     start_t = time.time()
 
     problem = (state.get("problem") or "").strip()
@@ -120,20 +143,29 @@ def evaluate_evidence(state: OneShotCodeGenState) -> Dict[str, Any]:
     evidence = (state.get("evidence") or "").strip()
     code = (state.get("generated_code") or "").strip()
     messages = state.get("messages") or []
-    
+
     if not problem or not hypothesis or not evidence or not code:
         raise ValueError("Problem, hypothesis, evidence, and code are required")
-    
+
     prompt = build_evidence_evaluation_prompt(problem, hypothesis, evidence, code)
     llm = get_default_llm_connector()
     evidence_evaluation = llm.generate(prompt)
 
     duration_ms = int((time.time() - start_t) * 1000)
-    logger.info(f"evaluate_evidence: done (evidence_evaluation={evidence_evaluation}, duration_ms={duration_ms})")
-    return {"evidence_evaluation": evidence_evaluation, "messages": messages, "llm_calls": int(state.get("llm_calls") or 0) + 1}
+    logger.info(
+        f"evaluate_evidence: done (evidence_evaluation={evidence_evaluation}, duration_ms={duration_ms})"
+    )
+    return {
+        "evidence_evaluation": evidence_evaluation,
+        "messages": messages,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+    }
+
 
 def generate_reflection(state: OneShotCodeGenState) -> Dict[str, Any]:
-    logger.info(f"generate_reflection: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})")
+    logger.info(
+        f"generate_reflection: start (problem_chars={len(state.get('problem') or '')}, hypothesis={state.get('hypothesis')})"
+    )
     start_t = time.time()
 
     problem = (state.get("problem") or "").strip()
@@ -145,11 +177,17 @@ def generate_reflection(state: OneShotCodeGenState) -> Dict[str, Any]:
 
     if not problem or not hypothesis or not code:
         raise ValueError("Problem, hypothesis, and code are required")
-    
+
     prompt = build_reflection_prompt(problem, hypothesis, code)
     llm = get_default_llm_connector()
     reflection = llm.generate(prompt)
 
     duration_ms = int((time.time() - start_t) * 1000)
-    logger.info(f"generate_reflection: done (reflection={reflection}, duration_ms={duration_ms})")
-    return {"reflection": reflection, "messages": messages, "llm_calls": int(state.get("llm_calls") or 0) + 1}
+    logger.info(
+        f"generate_reflection: done (reflection={reflection}, duration_ms={duration_ms})"
+    )
+    return {
+        "reflection": reflection,
+        "messages": messages,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+    }

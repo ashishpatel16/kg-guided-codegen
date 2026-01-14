@@ -4,7 +4,13 @@ import logging
 
 from langgraph.graph import END, START, StateGraph
 
-from agent.nodes import generate_code, generate_evidence, generate_hypothesis, evaluate_evidence, generate_reflection
+from agent.nodes import (
+    generate_code,
+    generate_evidence,
+    generate_hypothesis,
+    evaluate_evidence,
+    generate_reflection,
+)
 from agent.state import OneShotCodeGenState
 
 logger = logging.getLogger(__name__)
@@ -41,7 +47,9 @@ def build_one_shot_codegen_agent():
     builder.add_edge("generate_code", "generate_evidence")
     builder.add_edge("generate_evidence", "evaluate_evidence")
     builder.add_edge("generate_reflection", "generate_hypothesis")
-    builder.add_conditional_edges("evaluate_evidence", should_stop, {False: "generate_reflection", True: END})
+    builder.add_conditional_edges(
+        "evaluate_evidence", should_stop, {False: "generate_reflection", True: END}
+    )
 
     compiled = builder.compile()
     logger.info("Compiled one-shot codegen agent graph")
