@@ -66,7 +66,6 @@ def visualize_call_graph(graph):
     )
     plt.savefig("artifacts/call_graph.png")
     plt.show()
-    
 
 
 def convert_graph_to_json(graph: nx.DiGraph) -> dict:
@@ -194,27 +193,31 @@ def find_functions(
 def get_calls_in_scope(node: Node, source_code: str):
     """Recursively finds calls but stops at function/class definition boundaries."""
     calls = []
-    
+
     # Check if current node is a call
     if node.type == "call":
         func_node = node.child_by_field_name("function")
         if func_node:
             line_number = func_node.start_point[0] + 1
             if func_node.type == "identifier":
-                 call_name = source_code[func_node.start_byte : func_node.end_byte].decode("utf-8")
-                 calls.append((call_name, line_number))
+                call_name = source_code[
+                    func_node.start_byte : func_node.end_byte
+                ].decode("utf-8")
+                calls.append((call_name, line_number))
             # Handle attribute access: obj.method()
             elif func_node.type == "attribute":
-                 # Capture full attribute chain e.g. "found.append" or "self.method"
-                 call_name = source_code[func_node.start_byte : func_node.end_byte].decode("utf-8")
-                 calls.append((call_name, line_number))
+                # Capture full attribute chain e.g. "found.append" or "self.method"
+                call_name = source_code[
+                    func_node.start_byte : func_node.end_byte
+                ].decode("utf-8")
+                calls.append((call_name, line_number))
 
     # Recurse children, but STOP if entering a new scope definition
     for child in node.children:
         if child.type in ("function_definition", "class_definition"):
             continue
         calls.extend(get_calls_in_scope(child, source_code))
-        
+
     return calls
 
 
@@ -232,21 +235,21 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
     functions = {}
 
     find_functions(tree.root_node, source_code, functions, graph)
-    
+
     # Handle top-level calls (script body)
     # We create a pseudo node "__main__" representing the module body
     top_level_calls = get_calls_in_scope(tree.root_node, source_code)
-    
+
     if top_level_calls:
         main_node_name = "__main__"
-        # Only add __main__ if it makes calls or is relevant? 
+        # Only add __main__ if it makes calls or is relevant?
         # Yes, let's add it.
         metadata = {
             "type": "module",
             "parameters": "",
             "docstring": "",
             "start_line": 1,
-            "end_line": len(code.splitlines())
+            "end_line": len(code.splitlines()),
         }
         graph.add_node(main_node_name, **metadata)
         # Add edges for top level calls
@@ -259,26 +262,25 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
             # For consistency with previous step, let's stick to "known targets" + "local definitions".
             # BUT for main.py, everything is imported. If we filter strictly, we get empty edges.
             # Let's relax the filter for __main__ or generally?
-            
+
             # For now, let's allow edges to ANYTHING from __main__ to show the script activity?
-            # Or keep strict? 
+            # Or keep strict?
             # Given main.py calls imported things, showing them is valuable.
             # Let's add them as external nodes?
-            
-            if call_name in functions:
-                 graph.add_edge(main_node_name, call_name, lineno=line_no)
-            else:
-                 # It's an external call. Let's add it to graph to be useful for main.py
-                 if call_name not in graph:
-                     graph.add_node(call_name, type="external")
-                 graph.add_edge(main_node_name, call_name, lineno=line_no)
 
+            if call_name in functions:
+                graph.add_edge(main_node_name, call_name, lineno=line_no)
+            else:
+                # It's an external call. Let's add it to graph to be useful for main.py
+                if call_name not in graph:
+                    graph.add_node(call_name, type="external")
+                graph.add_edge(main_node_name, call_name, lineno=line_no)
 
     for func_name, node in functions.items():
         # Determine current class context if any (from func_name prefix)
         # simplistic: if func_name has dots, scope is everything before last dot
         current_scope = func_name.rsplit(".", 1)[0] if "." in func_name else ""
-        
+
         # Use existing logic for internal function bodies
         # Note: We should probably use get_calls_in_scope here too to avoid double counting nested funcs?
         # get_function_calls WAS recursive.
@@ -289,11 +291,13 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
         # BUT outer->inner_body_call edges are ALSO created?
         # Yes, get_function_calls is fully recursive.
         # We should replace it with get_calls_in_scope to be correct!
-        
-        calls = get_calls_in_scope(node, source_code) # Swapping to safer scoped call finder
+
+        calls = get_calls_in_scope(
+            node, source_code
+        )  # Swapping to safer scoped call finder
         for call_name, line_no in calls:
             target = None
-            
+
             # Handle self.method calls by checking against current_scope
             search_name = call_name
             if search_name.startswith("self."):
@@ -305,7 +309,7 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
             # 2. Scoped match (using search_name to handle 'self')
             elif current_scope and f"{current_scope}.{search_name}" in functions:
                 target = f"{current_scope}.{search_name}"
-            
+
             # IF target found (internal), add edge
             if target:
                 graph.add_edge(func_name, target, lineno=line_no)
@@ -313,7 +317,7 @@ def build_call_graph(file_path: str) -> nx.DiGraph:
             # For rich graphs, yes.
             else:
                 if call_name not in graph:
-                     graph.add_node(call_name, type="external")
+                    graph.add_node(call_name, type="external")
                 graph.add_edge(func_name, call_name, lineno=line_no)
 
     return graph
