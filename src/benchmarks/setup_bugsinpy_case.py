@@ -10,6 +10,7 @@ from typing import Optional
 def setup_bugsinpy_case(
     project_name: str,
     bug_id: str,
+    version: int = 0,
     experiments_dir: str = "experiments",
     bugsinpy_root: str = "datasets/BugsInPy",
 ) -> Path:
@@ -51,7 +52,7 @@ def setup_bugsinpy_case(
         "-i",
         str(bug_id),
         "-v",
-        "0",
+        str(version),
         "-w",
         str(work_dir),
     ]
@@ -120,6 +121,8 @@ def run_bugsinpy_case(
 
     cmd = [str(test_cmd), "-w", str(work_dir), "-r" if run_relevant else "-a"]
 
+    print(f"Running command: {cmd}")
+
     print(f"Running tests in {work_dir}...")
     try:
         # bugsinpy-test prints output to stdout/stderr and creates bugsinpy_fail.txt on failure.
@@ -170,6 +173,8 @@ if __name__ == "__main__":
 
         result = run_bugsinpy_case(repo_dir)
         print(f"Test execution success: {result.success}")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
         if not result.success:
             print(f"Failure details: {result.fail_details}")
 
