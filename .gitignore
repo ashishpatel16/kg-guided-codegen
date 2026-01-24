@@ -13,3 +13,4 @@ docs/
 experiments/
 **/__pycache__/
 src/benchmarks/exp
+.agent/

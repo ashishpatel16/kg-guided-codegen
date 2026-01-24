@@ -24,9 +24,7 @@ def extract_test_file(repo_dir: Path) -> Optional[str]:
     
     try:
         content = run_test_sh.read_text()
-        # Look for python test command
-        # Expected format: python -m unittest ... test.module.Class.test_method
-        # We want "test/module.py"
+        # Expected format: python -m unittest ... test.module.Class.test_method -> We want to resolve to "test/module.py"
         
         # Simple heuristic: find argument starting with 'test.' or 'tests.'
         parts = content.split()
@@ -61,7 +59,7 @@ def extract_test_file(repo_dir: Path) -> Optional[str]:
         return None
 
 if __name__ == "__main__":
-    project_name = "youtube-dl"
+    project_name = "black"
     bug_id = 1
     version = 0
     experiments_dir = "experiments"
@@ -112,10 +110,6 @@ if __name__ == "__main__":
             
             # Slice for test
             slicer = GraphSlicer(repo_graph)
-            # The node name in index is likely "test.test_utils" etc, but let's see. 
-            # The slicer expects file path match if using current logic?
-            # repo_call_graph.py:314 if data.get("file") == test_file_path:
-            # So we pass absolute path to slicer
             
             abs_test_file = str(repo_dir / test_file)
             sliced_graph = slicer.slice_for_test(abs_test_file)

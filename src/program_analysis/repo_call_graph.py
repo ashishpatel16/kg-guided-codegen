@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple, Optional, Set
 PY_LANGUAGE = Language(tspython.language())
 parser = Parser(PY_LANGUAGE)
 
+
 class RepoIndexer:
     """
     Scans a repository to index all classes and functions.
@@ -20,7 +21,7 @@ class RepoIndexer:
         self.index: Dict[str, Dict] = {}  # FQN -> {path, line, type, ...}
 
     def index_repo(self):
-        """Walks the repo and builds the index."""
+        """Walks the repo and builds the index. Includes anyfile that ends in .py extension"""
         for root, _, files in os.walk(self.root_dir):
             for file in files:
                 if file.endswith(".py"):
@@ -29,8 +30,10 @@ class RepoIndexer:
         return self.index
 
     def _index_file(self, file_path: str):
+        print(f"Indexing {file_path}..")
         rel_path = os.path.relpath(file_path, self.root_dir)
         module_path = rel_path.replace(".py", "").replace(os.sep, ".")
+
         # Handle __init__
         if module_path.endswith(".__init__"):
             module_path = module_path[:-9]
@@ -44,15 +47,17 @@ class RepoIndexer:
             print(f"Failed to index {file_path}: {e}")
 
     def _find_definitions(self, node: Node, source_code: bytes, scope: str, file_path: str):
+        print(f"Processing node: {node.type} \n {node.text.decode('utf-8')}\n")    
         if node.type == "class_definition":
             name_node = node.child_by_field_name("name")
             name = source_code[name_node.start_byte : name_node.end_byte].decode("utf-8")
             fqn = f"{scope}.{name}"
             
             self.index[fqn] = {
-                "type": "class",
+                "type": "class_definition",
                 "file": file_path,
-                "start_line": node.start_point[0] + 1
+                "start_line": node.start_point[0] + 1,
+                "end_line": node.end_point[0] + 1
             }
             
             # Recurse for methods
@@ -65,9 +70,10 @@ class RepoIndexer:
             fqn = f"{scope}.{name}"
             
             self.index[fqn] = {
-                "type": "function",
+                "type": "function_definition",
                 "file": file_path,
-                "start_line": node.start_point[0] + 1
+                "start_line": node.start_point[0] + 1,
+                "end_line": node.end_point[0] + 1
             }
             # TODO: Currently recursing into functions for definitions is not implemented, TBD
 
@@ -158,6 +164,8 @@ class CallGraphBuilder:
     def build(self):
         print("Indexing repo...")
         self.indexer.index_repo()
+
+        print(self.indexer.index)
         
         print("Building graph...")
         # Add all defined nodes first
@@ -295,10 +303,6 @@ class CallGraphBuilder:
                  self.graph.add_edge(source_fqn, target_fqn)
 
 
-def get_repo_call_graph(repo_root: str) -> nx.DiGraph:
-    builder = CallGraphBuilder(repo_root)
-    return builder.build()
-
 class GraphSlicer:
     def __init__(self, graph: nx.DiGraph):
         self.graph = graph
@@ -330,3 +334,29 @@ class GraphSlicer:
         # 3. Create subgraph
         return self.graph.subgraph(reachable_nodes).copy()
 
+
+def get_repo_call_graph(repo_root: str) -> nx.DiGraph:
+    builder = CallGraphBuilder(repo_root)
+    return builder.build()
+
+if __name__ == "__main__":
+    repo_root = "/Users/ashish/master-thesis/kg-guided-codegen/src/benchmarks/exp/demo"
+    # print(list(os.walk(repo_root))) # Returns dir_path, dir_name, file_names
+    indexer = RepoIndexer(repo_root)
+    indexer.index_repo()
+    print(indexer.index)
+    # graph = get_repo_call_graph(repo_root)
+    # print(f"Full graph nodes: {graph.number_of_nodes()}, edges: {graph.number_of_edges()}")
+    
+    # # Save full graph
+    # nx.write_gexf(graph, "artifacts/black_1_full.gexf")
+    
+    # # Slice for a test
+    # test_file = "tests/test_black.py"
+    # abs_test_file = str(Path(repo_root) / test_file)
+    # slicer = GraphSlicer(graph)
+    # sliced_graph = slicer.slice_for_test(abs_test_file)
+    # print(f"Sliced graph nodes: {sliced_graph.number_of_nodes()}, edges: {sliced_graph.number_of_edges()}")
+    
+    # # Save sliced graph
+    # nx.write_gexf(sliced_graph, "artifacts/black_1_sliced.gexf")
