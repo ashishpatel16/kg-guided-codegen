@@ -1,154 +1,16 @@
 import os
-import glob
-import ast
+from typing import Dict
+
 import networkx as nx
 import tree_sitter_python as tspython
 from tree_sitter import Language, Parser, Node
-from typing import Dict, List, Tuple, Optional, Set
+
+from src.program_analysis.indexing_utils import RepoIndexer, ImportResolver
+from src.program_analysis.models import CallGraphNode, CallGraphEdge, CallGraph
 
 # Re-using tree-sitter setup from static_call_graph.py
 PY_LANGUAGE = Language(tspython.language())
 parser = Parser(PY_LANGUAGE)
-
-
-class RepoIndexer:
-    """
-    Scans a repository to index all classes and functions.
-    Maps FullyQualifiedName -> (FilePath, NodeInfo)
-    """
-    def __init__(self, root_dir: str):
-        self.root_dir = os.path.abspath(root_dir)
-        self.index: Dict[str, Dict] = {}  # FQN -> {path, line, type, ...}
-
-    def index_repo(self):
-        """Walks the repo and builds the index. Includes anyfile that ends in .py extension"""
-        for root, _, files in os.walk(self.root_dir):
-            for file in files:
-                if file.endswith(".py"):
-                    full_path = os.path.join(root, file)
-                    self._index_file(full_path)
-        return self.index
-
-    def _index_file(self, file_path: str):
-        print(f"Indexing {file_path}..")
-        rel_path = os.path.relpath(file_path, self.root_dir)
-        module_path = rel_path.replace(".py", "").replace(os.sep, ".")
-
-        # Handle __init__
-        if module_path.endswith(".__init__"):
-            module_path = module_path[:-9]
-        
-        try:
-            with open(file_path, "rb") as f:
-                code = f.read()
-            tree = parser.parse(code)
-            self._find_definitions(tree.root_node, code, module_path, file_path)
-        except Exception as e:
-            print(f"Failed to index {file_path}: {e}")
-
-    def _find_definitions(self, node: Node, source_code: bytes, scope: str, file_path: str):
-        print(f"Processing node: {node.type} \n {node.text.decode('utf-8')}\n")    
-        if node.type == "class_definition":
-            name_node = node.child_by_field_name("name")
-            name = source_code[name_node.start_byte : name_node.end_byte].decode("utf-8")
-            fqn = f"{scope}.{name}"
-            
-            self.index[fqn] = {
-                "type": "class_definition",
-                "file": file_path,
-                "start_line": node.start_point[0] + 1,
-                "end_line": node.end_point[0] + 1
-            }
-            
-            # Recurse for methods
-            for child in node.children:
-                self._find_definitions(child, source_code, fqn, file_path)
-
-        elif node.type == "function_definition":
-            name_node = node.child_by_field_name("name")
-            name = source_code[name_node.start_byte : name_node.end_byte].decode("utf-8")
-            fqn = f"{scope}.{name}"
-            
-            self.index[fqn] = {
-                "type": "function_definition",
-                "file": file_path,
-                "start_line": node.start_point[0] + 1,
-                "end_line": node.end_point[0] + 1
-            }
-            # TODO: Currently recursing into functions for definitions is not implemented, TBD
-
-        else:
-            for child in node.children:
-                self._find_definitions(child, source_code, scope, file_path)
-
-
-class ImportResolver:
-    """
-    Resolves imports in a file to map local names to Fully Qualified Names.
-    """
-    def __init__(self, repo_root: str):
-        self.repo_root = repo_root
-
-    def resolve_imports(self, file_path: str) -> Dict[str, str]:
-        """
-        Returns a dict: LocalName -> FullyQualifiedName
-        e.g. "Node" -> "tree_sitter.Node"
-        """
-        resolved = {}
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                tree = ast.parse(f.read())
-        except Exception:
-            return {}
-
-        rel_dir = os.path.dirname(os.path.relpath(file_path, self.repo_root))
-        base_package = rel_dir.replace(os.sep, ".")
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    # import os -> os: os
-                    # import os as o -> o: os
-                    target = alias.name
-                    local = alias.asname if alias.asname else alias.name
-                    resolved[local] = target
-            
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                # Handle relative imports
-                if node.level > 0:
-                    # simplistic relative import handling
-                    # level 1 = ., level 2 = ..
-                    parts = base_package.split(".")
-                    if node.level > len(parts) + 1:
-                        # Error or too far back
-                        resolved_module = "" # fallback
-                    else:
-                        # Strip last (level-1) parts
-                        # e.g. pkg.sub, level 1 (.) -> pkg.sub
-                        # e.g. pkg.sub, level 2 (..) -> pkg
-                        if node.level == 1:
-                            parent = parts
-                        else:
-                            parent = parts[:-(node.level-1)]
-                        resolved_module = ".".join(parent)
-                        if module:
-                            resolved_module += f".{module}"
-                else:
-                    resolved_module = module
-
-                for alias in node.names:
-                    # from X import Y
-                    name = alias.name
-                    local = alias.asname if alias.asname else name
-                    if name == "*":
-                        continue # Can't resolve star imports easily without index check
-                    
-                    fqn = f"{resolved_module}.{name}" if resolved_module else name
-                    resolved[local] = fqn
-        
-        return resolved
-
 
 class CallGraphBuilder:
     def __init__(self, repo_root: str):
@@ -161,13 +23,43 @@ class CallGraphBuilder:
     def root_dir(self):
         return self.repo_root
 
-    def build(self):
-        print("Indexing repo...")
-        self.indexer.index_repo()
+    def export_graph(self) -> CallGraph:
+        """
+        Exports the NetworkX graph to the CallGraph Pydantic model.
+        """
+        nodes = []
+        for fqn, data in self.graph.nodes(data=True):
+            nodes.append(CallGraphNode(
+                fqn=fqn,
+                type=data.get("type", "external"),
+                file=data.get("file", ""),
+                start_line=data.get("start_line", 0),
+                end_line=data.get("end_line", 0),
+                analysis_type="static"
+            ))
 
-        print(self.indexer.index)
-        
-        print("Building graph...")
+        edges = []
+        for u, v, data in self.graph.edges(data=True):
+            edges.append(CallGraphEdge(
+                source=u,
+                target=v,
+                analysis_type="static"
+            ))
+
+        return CallGraph(
+            static=True,
+            dynamic=False,
+            nodes=nodes,
+            edges=edges
+        )
+
+    def build_call_graph(self) -> CallGraph:
+        """Builds the static call graph and returns it as a CallGraph model."""
+        self.build()
+        return self.export_graph()
+
+    def build(self):
+        self.indexer.index_repo()
         # Add all defined nodes first
         for fqn, meta in self.indexer.index.items():
             self.graph.add_node(fqn, **meta)
@@ -180,19 +72,64 @@ class CallGraphBuilder:
         
         return self.graph
 
+    def _module_fqn_from_file(self, file_path: str) -> str:
+        rel_path = os.path.relpath(file_path, self.repo_root)
+        module_path = rel_path.replace(".py", "").replace(os.sep, ".")
+        if module_path.endswith(".__init__"):
+            module_path = module_path[:-9]
+        return module_path
+
+    def _ensure_node(
+        self,
+        fqn: str,
+        *,
+        type: str = "external",
+        file: str = "",
+        start_line: int = 0,
+        end_line: int = 0,
+    ) -> None:
+        if fqn in self.graph.nodes:
+            # Fill missing metadata opportunistically (prefer existing).
+            data = self.graph.nodes[fqn]
+            data.setdefault("type", type)
+            data.setdefault("file", file)
+            data.setdefault("start_line", start_line)
+            data.setdefault("end_line", end_line)
+            return
+        self.graph.add_node(
+            fqn,
+            type=type,
+            file=file,
+            start_line=start_line,
+            end_line=end_line,
+        )
+
     def _process_file(self, file_path: str):
         # 1. Resolve imports for this file
         imports = self.resolver.resolve_imports(file_path)
         
         # 2. Determine current module FQN
-        rel_path = os.path.relpath(file_path, self.repo_root)
-        module_path = rel_path.replace(".py", "").replace(os.sep, ".")
-        if module_path.endswith(".__init__"):
-            module_path = module_path[:-9]
+        module_path = self._module_fqn_from_file(file_path)
+
+        # Ensure module node exists (captures top-level calls)
+        try:
+            with open(file_path, "rb") as f:
+                code = f.read()
+            end_line = code.count(b"\n") + 1 if code else 0
+        except Exception:
+            end_line = 0
+        self._ensure_node(
+            module_path,
+            type="module",
+            file=file_path,
+            start_line=1,
+            end_line=end_line,
+        )
 
         # 3. Find calls using tree-sitter
-        with open(file_path, "rb") as f:
-            code = f.read()
+        if "code" not in locals():
+            with open(file_path, "rb") as f:
+                code = f.read()
         tree = parser.parse(code)
         
         # We need a way to track the "Current Scope" (Function/Class) so we adding edges from Correct Source
@@ -229,11 +166,6 @@ class CallGraphBuilder:
         # Heuristic resolution
         target_fqn = None
         
-        # Case 1: Direct import match (e.g. usage of `Node` where `from tree_sitter import Node`)
-        # logic: split call_text by dot. 
-        # e.g. "os.path.join" -> check "os" in imports
-        # e.g. "Node" -> check "Node" in imports
-        
         parts = call_text.split(".")
         root_name = parts[0]
         
@@ -250,13 +182,6 @@ class CallGraphBuilder:
             
             # Subcase 2a: 'self.method()'
             if root_name == "self":
-                # source_fqn: package.module.Class.method
-                # We want: package.module.Class.target_method
-                
-                # Check if we are inside a class (heuristic: 2 dots or check index type)
-                # Let's try to extract class scope from source_fqn
-                # source_fqn = src.utils.Worker.do_work
-                # parent = src.utils.Worker
                 if "." in source_fqn:
                     parent_scope = source_fqn.rsplit(".", 1)[0]
                     # We expect parent_scope to be a Class
@@ -270,15 +195,6 @@ class CallGraphBuilder:
             else:
                 # Subcase 2b: Sibling in same module (e.g. helper())
                 
-                # TODO: Intra-module resolution implemented via heuristic.
-                # DONE:
-                # - Reconstructs module path by stripping last parts of source_fqn and checking against index.
-                # MISSING:
-                # - Explicitly passing 'module_path' from _process_file would be robust.
-                # - Handling inner functions/closures (not indexed currently).
-                # - Handling dynamic resolution/aliasing within module.
-
-                
                 scope_parts = source_fqn.split(".")
                 # Try all parent scopes
                 for i in range(len(scope_parts), 0, -1):
@@ -289,18 +205,21 @@ class CallGraphBuilder:
                         break
 
         
+        # Ensure source exists (e.g., module-level calls use the module node)
+        if source_fqn not in self.graph.nodes:
+            self._ensure_node(source_fqn, type="external")
+
         # Final Verification: Is target_fqn in our index?
         if target_fqn and target_fqn in self.indexer.index:
             self.graph.add_edge(source_fqn, target_fqn)
-        else:
-            # Maybe add as external definition?
-            # self.graph.add_edge(source_fqn, target_fqn or call_text, type="external")
-            pass
-            
-            # IMPROVEMENT: For now, let's just create the edge if we have a strong candidate
-            # or if it's explicitly explicitly resolved.
-            if target_fqn:
-                 self.graph.add_edge(source_fqn, target_fqn)
+            return
+
+        # Maximal graph: keep unresolved/imported targets as "external" nodes.
+        if target_fqn:
+            self._ensure_node(target_fqn, type="external")
+            self.graph.add_edge(source_fqn, target_fqn)
+
+    
 
 
 class GraphSlicer:
@@ -334,29 +253,30 @@ class GraphSlicer:
         # 3. Create subgraph
         return self.graph.subgraph(reachable_nodes).copy()
 
-
-def get_repo_call_graph(repo_root: str) -> nx.DiGraph:
+def build_static_call_graph(repo_root: str) -> CallGraph:
+    """Builds a static call graph for a repository and returns the CallGraph model."""
     builder = CallGraphBuilder(repo_root)
-    return builder.build()
+    return builder.build_call_graph()
 
 if __name__ == "__main__":
+    import json
     repo_root = "/Users/ashish/master-thesis/kg-guided-codegen/src/benchmarks/exp/demo"
-    # print(list(os.walk(repo_root))) # Returns dir_path, dir_name, file_names
-    indexer = RepoIndexer(repo_root)
-    indexer.index_repo()
-    print(indexer.index)
-    # graph = get_repo_call_graph(repo_root)
-    # print(f"Full graph nodes: {graph.number_of_nodes()}, edges: {graph.number_of_edges()}")
-    
-    # # Save full graph
-    # nx.write_gexf(graph, "artifacts/black_1_full.gexf")
-    
-    # # Slice for a test
-    # test_file = "tests/test_black.py"
-    # abs_test_file = str(Path(repo_root) / test_file)
-    # slicer = GraphSlicer(graph)
-    # sliced_graph = slicer.slice_for_test(abs_test_file)
-    # print(f"Sliced graph nodes: {sliced_graph.number_of_nodes()}, edges: {sliced_graph.number_of_edges()}")
-    
-    # # Save sliced graph
-    # nx.write_gexf(sliced_graph, "artifacts/black_1_sliced.gexf")
+
+    g = build_static_call_graph(str(repo_root))
+    # print(g, type(g))
+
+    # Export as JSON
+    with open("artifacts/demo_call_graph_new.json", "w") as f:
+        json.dump(g.model_dump(), f, indent=4)
+        print(f"Saved to artifacts/demo_call_graph_new.json")
+
+    # print(f"static={g.static} dynamic={g.dynamic}")
+    # print(f"nodes={len(g.nodes)} edges={len(g.edges)}")
+    # print("node types:", dict(Counter(n.type for n in g.nodes)))
+
+    # # Show a few sample nodes/edges
+    # for n in sorted(g.nodes, key=lambda n: n.fqn)[:10]:
+    #     print(f"NODE {n.type}: {n.fqn} ({Path(n.file).name}:{n.start_line}-{n.end_line})")
+
+    for e in g.edges[:10]:
+        print(f"EDGE: {e.source} -> {e.target}")
