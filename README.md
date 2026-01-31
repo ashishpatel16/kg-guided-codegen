@@ -49,9 +49,9 @@ Tarantula is a statistical fault localization technique that assigns a suspiciou
 
 The suspiciousness of a node $n$ is calculated as:
 
-\[
+$$
 Suspiciousness(n) = \frac{\frac{failed(n)}{total\_failed}}{\frac{passed(n)}{total\_passed} + \frac{failed(n)}{total\_failed}}
-\]
+$$
 
 **Where:**
 - $failed(n)$: Number of failing tests that executed node $n$.
