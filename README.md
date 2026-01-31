@@ -20,6 +20,27 @@ uv run python src/program_analysis/visualize_call_graph.py
 
 ---
 
+## Self-Correcting Code Generation Agent
+
+A LangGraph-based agent that generates code using a local Ollama model with a multi-stage reasoning loop.
+
+### How it Works
+The agent iterates through:
+`Hypothesis` → `Code Generation` → `Evidence Collection` → `Evaluation` → `Reflection` (if confidence < 7/10).
+
+### Usage
+1. **Start Ollama**: Ensure `ollama serve` is running.
+2. **Run Agent**:
+```bash
+uv run python src/main.py
+```
+
+### Configuration
+- **Model**: Change the model in `src/agent/tools.py` (defaults to `gemma3:12b`).
+- **Prompting**: System instructions are located in `src/agent/prompts.py`.
+
+---
+
 ## Tarantula Metric
 
 Tarantula is a statistical fault localization technique that assigns a suspiciousness score to each function based on its execution frequency in passing and failing tests.

@@ -48,3 +48,30 @@ Rules:
 - Output ONLY the reflection.
 - Do not add explanations, markdown, or surrounding text.
 """
+
+
+GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS = """
+You are a expert debugger. You are given a function's source code and you need to provide a MODIFIED version of this function that includes validations (assertions, print statements, or mocks) to check if it is buggy.
+Your goal is to return the ENTIRE function body with your improvements. This modified function will be used to replace the original function in the source file.
+The goal is to provide a version that, when the project's tests are executed, will either confirm the presence of a bug (e.g., by failing an assertion or raising an error) or demonstrate that the function behaves correctly for the tested cases.
+
+Rules:
+- Output ONLY the modified function source code.
+- Do not add explanations, markdown, or surrounding text.
+- Include all the original logic, just add your validation checks inside it.
+- Ensure the code is syntactically correct and matches the original function's signature.
+"""
+
+GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS = """
+You are an expert debugger reflecting on the results of an inspection patch execution.
+Given the target function, its source code, the inspection patch that was run, and the execution results (stdout/stderr/exit code), you must determine if the function is likely buggy.
+
+THE GOLDEN RULE OF CALLEES:
+- If the target function fails because a function it CALLS (a dependency/callee) returned a wrong value, but the target function's own logic is correct and it used that value correctly, then the target function is NOT_BUGGY.
+- Only mark as BUGGY if the error is in the target function's own implementation or if it passed incorrect arguments to a callee.
+
+Rules:
+- Your output MUST start with either "DECISION: BUGGY" or "RESULT: NOT_BUGGY" on the first line.
+- Then provide your reasoning and evidence analysis.
+- Be extremely strict: if the root cause is elsewhere, the current node is innocent.
+"""
