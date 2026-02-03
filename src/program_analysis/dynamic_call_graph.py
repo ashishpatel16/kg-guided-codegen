@@ -1,23 +1,29 @@
 from __future__ import annotations
 
+import argparse
 import inspect
+import json
+import logging
 import os
 import runpy
+import shutil
 import sys
 import time
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-import logging
-import json
+
 import networkx as nx
 
+from src.docker_utils.basic_container import SimpleDockerSandbox
+from src.program_analysis.coverage import CoverageAnalyzer
 from src.program_analysis.models import (
     CallGraph,
     CallGraphEdge,
     CallGraphNode,
     ExecutionRecord,
+    RepoDefinition,
+    DockerTracerConfig,
+    _ActiveCall,
 )
-from src.program_analysis.coverage import CoverageAnalyzer
 
 
 def _safe_serialize(value: Any) -> Any:
@@ -94,15 +100,6 @@ def compute_suspiciousness_scores(
         node.suspiciousness = suspiciousness_scores.get(node.fqn, 0.0)
     
     return call_graph
-
-
-@dataclass(frozen=True)
-class _ActiveCall:
-    fqn: str
-    caller_fqn: Optional[str]
-    start_ts: float
-    start_rel_ts: float
-    args: Dict[str, Any]
 
 
 class DynamicCallGraphTracer:
@@ -443,7 +440,7 @@ def build_dynamic_call_graph(
     return tracer.export_call_graph()
 
 
-def build_experiement_primes():
+def build_experiment_primes():
     repo_root = "/Users/ashish/master-thesis/kg-guided-codegen/src/benchmarks/exp/demo"
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
@@ -678,12 +675,138 @@ def build_experiment_library():
          print(f"\nSaved full graph to {output_path}")
 
 
-if __name__ == "__main__":  # Demo with suspiciousness calculation
-    # Run the original primes experiment
-    build_experiement_primes()
+def run_dynamic_tracer_in_docker(
+    repo_def: RepoDefinition,
+    config: DockerTracerConfig = DockerTracerConfig()
+) -> CallGraph:
+    """
+    Standardized pipeline to run dynamic tracing in a Docker container.
+    It handles sandbox setup, dependency installation, source copying, 
+    tracer execution, and result retrieval.
+    """
+    with SimpleDockerSandbox(image_name=config.image_name, keep_alive=config.keep_alive) as sandbox:
+        try:
+            # Install debugger dependencies (minimum needed for the tracer)
+            print("Sandbox: Installing debugger dependencies...")
+            sandbox.run_command("pip install networkx pydantic pytest tree-sitter tree-sitter-python docker")
+
+            # Copy the debugger itself to the container
+            debugger_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            print(f"Sandbox: Copying debugger source from {debugger_root}...")
+            sandbox.copy_to(debugger_root, "debugger")
+
+            # Copy the target repo to /repo
+            print(f"Sandbox: Copying target repo from {repo_def.repo_path} to /repo...")
+            sandbox.copy_to(repo_def.repo_path, "repo")
+
+            # Install target repo requirements
+            if repo_def.install_command:
+                print(f"Sandbox: Running install command: {repo_def.install_command}")
+                sandbox.run_command(repo_def.install_command, workdir=os.path.join(sandbox.sandbox_dir, "repo"))
+            else:
+                print("Sandbox: Checking for requirements.txt...")
+                sandbox.run_command("if [ -f requirements.txt ]; then pip install -r requirements.txt; fi", workdir=os.path.join(sandbox.sandbox_dir, "repo"))
+
+            # Run the tracer inside the container
+            output_in_container = os.path.join(sandbox.sandbox_dir, config.output_file)
+            print(f"Sandbox: Running tracer for script {repo_def.trace_script}...")
+            
+            debugger_path = os.path.join(sandbox.sandbox_dir, "debugger")
+            repo_path = os.path.join(sandbox.sandbox_dir, "repo")
+            
+            run_cmd = (
+                f"export PYTHONPATH=$PYTHONPATH:{debugger_path}:{repo_path} && "
+                f"python3 -m src.program_analysis.dynamic_call_graph "
+                f"--repo {repo_path} --script {repo_def.trace_script} --output {output_in_container}"
+            )
+            exit_code, stdout, stderr = sandbox.run_command(run_cmd)
+            
+            if exit_code != 0:
+                print(f"Error: Tracer failed with exit code {exit_code}")
+                if stdout: print(f"STDOUT: {stdout}")
+                if stderr: print(f"STDERR: {stderr}")
+                raise RuntimeError("Dynamic tracing failed inside container")
+
+            # Retrieve the results
+            host_output_dir = os.path.abspath("artifacts")
+            os.makedirs(host_output_dir, exist_ok=True)
+            host_output_path = os.path.join(host_output_dir, config.output_file)
+            
+            print(f"Sandbox: Retrieving results to {host_output_path}...")
+            # SimpleDockerSandbox.copy_from extracts into a directory, so we handle that
+            temp_extract_dir = os.path.join(host_output_dir, "_temp_extract")
+            os.makedirs(temp_extract_dir, exist_ok=True)
+            sandbox.copy_from(output_in_container, temp_extract_dir)
+            
+            # The file should be at temp_extract_dir/config.output_file
+            extracted_file = os.path.join(temp_extract_dir, config.output_file)
+            if os.path.exists(extracted_file):
+                if os.path.exists(host_output_path):
+                    os.remove(host_output_path)
+                os.rename(extracted_file, host_output_path)
+            
+            # Clean up temp dir
+            shutil.rmtree(temp_extract_dir)
+
+            # Load and return CallGraph
+            with open(host_output_path, "r") as f:
+                data = json.load(f)
+                return CallGraph.model_validate(data)
+
+        except Exception as e:
+            print(f"Error in Dockerized pipeline: {e}")
+            raise
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Dynamic Call Graph Tracer")
+    parser.add_argument("--repo", help="Path to the repository root")
+    parser.add_argument("--script", help="Path to the script to trace (relative to repo root)")
+    parser.add_argument("--output", help="Path to save the output JSON", default="call_graph.json")
     
-    # Run the new library experiment
-    # build_experiment_library()
+    args = parser.parse_args()
+    
+    if args.repo and args.script:
+        # Running INSIDE container (or directly via CLI), equivalent to 'uv run -m src.program_analysis.dynamic_call_graph'
+        print(f"Tracing repo: {args.repo} with script: {args.script}")
+        
+        repo_abs = os.path.abspath(args.repo)
+        if repo_abs not in sys.path:
+            sys.path.insert(0, repo_abs)
+            
+        script_path = os.path.join(repo_abs, args.script)
+        if not os.path.exists(script_path):
+            print(f"Error: Script not found at {script_path}")
+            sys.exit(1)
+            
+        # Run tracing
+        call_graph = build_dynamic_call_graph_for_script(repo_abs, script_path)
+        
+        # Save output
+        with open(args.output, "w") as f:
+            json.dump(call_graph.model_dump(), f, indent=4)
+        print(f"Saved call graph to {args.output}")
+        
+    else:
+        # Running OUTSIDE container to trigger the pipeline
+        print("No CLI arguments provided. Running pipeline demo...")
+        
+        # Use absolute path for the host repo
+        demo_repo = os.path.abspath("src/benchmarks/exp/demo")
+        demo_script = "test_demo.py"
+        
+        repo_def = RepoDefinition(repo_path=demo_repo, trace_script=demo_script)
+        config = DockerTracerConfig(keep_alive=False, output_file="demo_docker_call_graph.json")
+        
+        try:
+            cg = run_dynamic_tracer_in_docker(repo_def, config)
+            print(f"\nSUCCESS: Built call graph with {len(cg.nodes)} nodes and {len(cg.edges)} edges.")
+            print(f"Result saved to artifacts/{config.output_file}")
+        except Exception as e:
+            print(f"\nPIPELINE FAILED: {e}")
+            sys.exit(1)
+
+   
 
     
 

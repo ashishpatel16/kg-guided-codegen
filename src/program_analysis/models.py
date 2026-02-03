@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Literal, Optional
 
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 
@@ -86,3 +87,28 @@ class CallGraph(BaseModel):
             suspicious = suspicious[:limit]
         
         return suspicious
+
+
+@dataclass(frozen=True)
+class _ActiveCall:
+    fqn: str
+    caller_fqn: Optional[str]
+    start_ts: float
+    start_rel_ts: float
+    args: Dict[str, Any]
+
+
+@dataclass
+class RepoDefinition:
+    """Minimal definition of a repository to be traced."""
+    repo_path: str
+    trace_script: str
+    install_command: Optional[str] = None
+
+
+@dataclass
+class DockerTracerConfig:
+    """Configuration for the Dockerized tracer pipeline."""
+    image_name: str = "python:3.11-slim"
+    keep_alive: bool = False
+    output_file: str = "call_graph.json"
