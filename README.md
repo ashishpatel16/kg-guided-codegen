@@ -1,65 +1,86 @@
-# KG-Guided Codegen: Dynamic Analysis Pipeline
+# KG-Guided Codegen: Dynamic Analysis Framework
 
-This pipeline traces Python execution to build dynamic call graphs and uses the **Tarantula** fault localization metric to identify suspicious code.
+A technical framework for tracing Python execution, building dynamic call graphs, and performing automated fault localization using the **Tarantula** metric.
 
-## Usage Guide
+## System Overview
 
-### 1. Run Dynamic Tracing
-Executes tests and captures call relationships, execution counts, and arguments.
-```bash
-uv run -m src.program_analysis.dynamic_call_graph
+The framework is composed of three primary decoupled layers:
+
+1.  **Program Analysis Module**: Traces execution and builds a dynamic CallGraph model, keeping track of the suspiciousness and coverage of each function.
+2.  **Execution Sandbox**: Provides isolated Docker environment for running code.
+3.  **Reasoning Agent**: A LangGraph-based agent for hypothesis-driven algorithmic debugger.
+
+### Unified Tracer Flow
+
+The core analysis pipeline ensures consistency across both local and containerized execution environments.
+
+```mermaid
+graph TD
+    Entry["trace_repo(scripts, test_mode)"] --> Engine
+    
+    subgraph Engine [Tracer Engine]
+        Tracer["Tracer Initialization"] --> Mode{Test Mode?}
+        
+        Mode -- "Yes" --> Discovery["Automatic Test Discovery"]
+        Discovery --> Loop["Individual Test Loop"]
+        Loop --> Snapshot["State Snapshot"]
+        Snapshot --> Run["Execute & Track"]
+        Run --> Delta["Delta Coverage Calculation"]
+        Delta --> Loop
+        
+        Mode -- "No" --> RunScript["Plain Execution"]
+    end
+    
+    subgraph Sandbox_Layer [Dockerized Isolation]
+        Docker["run_dynamic_tracer_in_docker"] --> Provision["Provision Sandbox"]
+        Provision --> Trigger["CLI Trigger"]
+        Trigger --> Entry
+    end
+
+    Loop --> Export["Export CallGraph"]
+    RunScript --> Export
+    Export --> Analyze["Compute Suspiciousness"]
 ```
-*Output: `artifacts/demo_call_graph_dynamic_with_suspiciousness.json`*
 
-### 2. Generate Visualization
-Converts the captured data into an interactive HTML dashboard.
-```bash
-uv run python src/program_analysis/visualize_call_graph.py
-```
-*Output: `artifacts/call_graph_visualization.html`*
 
 ---
 
-## Self-Correcting Code Generation Agent
+## API Guide
 
-A LangGraph-based agent that generates code using a local Ollama model with a multi-stage reasoning loop.
+### 1. Dynamic Tracing
+The primary entry point for analysis is `trace_repo`.
 
-### How it Works
-The agent iterates through:
-`Hypothesis` → `Code Generation` → `Evidence Collection` → `Evaluation` → `Reflection` (if confidence < 7/10).
+**Programmatic Usage:**
+```python
+from src.program_analysis import trace_repo
 
-### Usage
-1. **Start Ollama**: Ensure `ollama serve` is running.
-2. **Run Agent**:
-```bash
-uv run python src/main.py
+call_graph = trace_repo(
+    repo_root="./target_repo",
+    scripts=["tests/test_logic.py"],
+    test_mode=True
+)
 ```
 
-### Configuration
-- **Model**: Change the model in `src/agent/tools.py` (defaults to `gemma3:12b`).
-- **Prompting**: System instructions are located in `src/agent/prompts.py`.
+**CLI Usage:**
+```bash
+uv run -m src.program_analysis.dynamic_call_graph --repo . --scripts test_file.py --test-mode
+```
+
+### 2. Visualization
+Generate an interactive HTML dashboard from the exported `CallGraph` JSON.
+```bash
+uv run -m src.program_analysis.visualize_call_graph
+```
 
 ---
 
-## Tarantula Metric
+## Fault Localization: The Tarantula Metric
 
-Tarantula is a statistical fault localization technique that assigns a suspiciousness score to each function based on its execution frequency in passing and failing tests.
-
-### Mathematical Definition
-
-The suspiciousness of a node $n$ is calculated as:
+The framework implements the **Tarantula** algorithm to rank functions by their likelihood of containing a bug.
 
 $$
 Suspiciousness(n) = \frac{\frac{failed(n)}{total\_failed}}{\frac{passed(n)}{total\_passed} + \frac{failed(n)}{total\_failed}}
 $$
 
-**Where:**
-- $failed(n)$: Number of failing tests that executed node $n$.
-- $passed(n)$: Number of passing tests that executed node $n$.
-- $total\_failed$: Total number of failing tests in the suite.
-- $total\_passed$: Total number of passing tests in the suite.
-
-### Interpretation
-- **1.0**: High suspiciousness (node executed exclusively by failing tests).
-- **0.5**: Neutral (node executed proportionally by both passing and failing tests).
-- **0.0**: Low suspiciousness (node executed exclusively by passing tests).
+- **1.0**: Node executed exclusively by failing tests (High Priority).
+- **0.0**: Node executed exclusively by passing tests (Low Priority).
