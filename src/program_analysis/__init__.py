@@ -7,7 +7,6 @@ from .repo_call_graph import (
 )
 from .dynamic_call_graph import (
     DynamicCallGraphTracer,
-    build_dynamic_call_graph,
-    build_dynamic_call_graph_for_script,
+    trace_repo,
 )
 from .call_graph import merge_call_graphs
