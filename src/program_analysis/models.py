@@ -102,7 +102,7 @@ class _ActiveCall:
 class RepoDefinition:
     """Minimal definition of a repository to be traced."""
     repo_path: str
-    trace_script: str
+    trace_scripts: List[str]
     install_command: Optional[str] = None
 
 
@@ -112,3 +112,4 @@ class DockerTracerConfig:
     image_name: str = "python:3.11-slim"
     keep_alive: bool = False
     output_file: str = "call_graph.json"
+    test_mode: bool = False

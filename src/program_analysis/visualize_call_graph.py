@@ -47,18 +47,28 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
         file_groups[file_name].append(n)
 
     # Prepare Mermaid graph with color coding and Left-to-Right layout
-    mermaid_lines = ["graph LR"]
+    mermaid_lines = ["flowchart LR"]
     node_styles = []
     
+    def sanitize(s: str) -> str:
+        return "".join(c if c.isalnum() else "_" for c in s)
+
     # 1. Define Subgraphs (Files)
-    for file_name, group_nodes in file_groups.items():
-        # Sanitize subgraph ID
-        subgraph_id = file_name.replace(".", "_").replace("-", "_")
-        mermaid_lines.append(f"    subgraph {subgraph_id} [{file_name}]")
+    for file_idx, (file_name, group_nodes) in enumerate(file_groups.items()):
+        # Sanitize subgraph ID to be valid CSS/Mermaid identifier
+        subgraph_id = f"file_{file_idx}"
+        mermaid_lines.append(f"    subgraph {subgraph_id} [\"{file_name}\"]")
         for n in group_nodes:
-            # Sanitize Node ID
-            node_id = n["fqn"].replace(".", "_").replace("<", "lt").replace(">", "gt").replace("[", "lb").replace("]", "rb")
-            mermaid_lines.append(f"        {node_id}[{n['fqn']}]")
+            # Use the node's index in the original list as its ID for robust lookup
+            try:
+                node_idx = nodes.index(n)
+                node_id = f"node_{node_idx}"
+            except ValueError:
+                node_id = "node_" + sanitize(n["fqn"])
+            
+            # Escape characters that Mermaid might choke on even in quotes
+            label = n["fqn"].replace("\"", "'").replace("<", "(").replace(">", ")")
+            mermaid_lines.append(f"        {node_id}[\"{label}\"]")
             
             # Prepare styling
             score = n.get("suspiciousness", 0) or 0
@@ -68,14 +78,17 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
             hex_color = f"#{r:02x}{g:02x}{b:02x}"
             node_styles.append(f"    style {node_id} fill:{hex_color},stroke:#333,stroke-width:1px,color:#fff")
         mermaid_lines.append("    end")
-        # Style the subgraph itself with a clean yellow fill
+        # Style the subgraph itself
         node_styles.append(f"    style {subgraph_id} fill:#fef9c3,stroke:#facc15,stroke-width:2px,stroke-dasharray: 5 5")
 
     # 2. Define Edges (Calls)
+    fqn_to_idx = {n["fqn"]: i for i, n in enumerate(nodes)}
     for edge in edges:
-        source_id = edge["source"].replace(".", "_").replace("<", "lt").replace(">", "gt").replace("[", "lb").replace("]", "rb")
-        target_id = edge["target"].replace(".", "_").replace("<", "lt").replace(">", "gt").replace("[", "lb").replace("]", "rb")
-        mermaid_lines.append(f"    {source_id} --> {target_id}")
+        source_idx = fqn_to_idx.get(edge["source"])
+        target_idx = fqn_to_idx.get(edge["target"])
+        
+        if source_idx is not None and target_idx is not None:
+            mermaid_lines.append(f"    node_{source_idx} --> node_{target_idx}")
     
     mermaid_graph = "\n".join(mermaid_lines + node_styles)
 
@@ -86,7 +99,7 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Call Graph Analysis Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <!-- Prism.js for syntax highlighting -->
@@ -595,9 +608,24 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
                     mermaidNodes.forEach(node => {{
                         node.style.cursor = 'pointer';
                         node.onclick = () => {{
-                            const label = node.querySelector('.nodeLabel').innerText;
-                            const foundNode = nodes.find(n => n.fqn === label);
-                            if (foundNode) showDetails(foundNode);
+                            // Use the ID to find the node index
+                            const nodeId = node.id;
+                            // Mermaid sometimes prefixes IDs or adds suffixes
+                            const match = nodeId.match(/node_([0-9]+)/);
+                            if (match) {{
+                                const index = parseInt(match[1]);
+                                if (nodes[index]) {{
+                                    showDetails(nodes[index]);
+                                    return;
+                                }}
+                            }}
+                            
+                            // Fallback to label search if ID lookup fails
+                            const label = node.querySelector('.nodeLabel')?.innerText;
+                            if (label) {{
+                                const foundNode = nodes.find(n => n.fqn === label || n.fqn.replace("<", "(").replace(">", ")") === label);
+                                if (foundNode) showDetails(foundNode);
+                            }}
                         }};
                     }});
                 }}
@@ -622,7 +650,7 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
     print(f"Visualization generated at: {output_path}")
 
 if __name__ == "__main__":
-    json_path = "artifacts/demo_call_graph_dynamic_with_suspiciousness.json"
+    json_path = "artifacts/demo_docker_call_graph_updated.json"
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found. Run the dynamic call graph script first.")
         sys.exit(1)

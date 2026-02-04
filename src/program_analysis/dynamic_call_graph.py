@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import inspect
 import json
 import logging
@@ -9,6 +10,7 @@ import runpy
 import shutil
 import sys
 import time
+import unittest
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import networkx as nx
@@ -117,7 +119,7 @@ class DynamicCallGraphTracer:
         repo_root: str,
         *,
         include_external: bool = True,
-        max_executions_per_node: Optional[int] = None,
+        max_executions_per_node: Optional[int] = 25,
         log_level: int = logging.INFO,
     ):
         self.repo_root = os.path.abspath(repo_root)
@@ -232,6 +234,33 @@ class DynamicCallGraphTracer:
         self._test_results[test_fqn] = passed
         self._node_execution_map[test_fqn] = executed_nodes
         self._logger.info(f"Added test result: {test_fqn} (passed={passed}, executed {len(executed_nodes)} nodes)")
+
+    def run_test_and_track(self, test_name: str, test_func: Callable[[], Any]) -> bool:
+        """
+        Runs a specific test function, tracks its coverage, and records the result.
+        This is used for fault localization (e.g., Tarantula).
+        """
+        # snapshot execution counts to see what was executed
+        counts_before = {fqn: data["execution_count"] for fqn, data in self._nodes.items()}
+        
+        passed = True
+        try:
+            # We use run_callable to trace the execution of the test
+            self.run_callable(test_func)
+        except (AssertionError, Exception):
+            passed = False
+        
+        # Determine executed nodes during this specific test
+        executed_nodes = set()
+        for fqn, data in self._nodes.items():
+            if data["execution_count"] > counts_before.get(fqn, 0):
+                # EXCLUDE test code from suspiciousness calculation
+                filename = os.path.basename(data.get("file", ""))
+                if not (filename.startswith("test_") or fqn.startswith("test_")):
+                    executed_nodes.add(fqn)
+        
+        self.add_test_result(test_name, passed=passed, executed_nodes=executed_nodes)
+        return passed
 
     def trace_func(self, frame, event: str, arg):
         """
@@ -408,271 +437,94 @@ class DynamicCallGraphTracer:
         return call_graph
 
 
-def build_dynamic_call_graph_for_script(
+def trace_repo(
     repo_root: str,
-    file_path: str,
+    scripts: List[str],
     *,
-    include_external: bool = True,
+    test_mode: bool = False,
+    include_external: bool = False,
     max_executions_per_node: Optional[int] = None,
 ) -> CallGraph:
+    """
+    Unified entry point for tracing a repository.
+    Handles multiple entry-point scripts and optional test discovery.
+    """
     tracer = DynamicCallGraphTracer(
         repo_root,
         include_external=include_external,
         max_executions_per_node=max_executions_per_node,
     )
-    tracer.run_script(file_path)
-    return tracer.export_call_graph()
 
-
-def build_dynamic_call_graph(
-    repo_root: str,
-    runner: Callable[[], Any],
-    *,
-    include_external: bool = True,
-    max_executions_per_node: Optional[int] = None,
-) -> CallGraph:
-    tracer = DynamicCallGraphTracer(
-        repo_root,
-        include_external=include_external,
-        max_executions_per_node=max_executions_per_node,
-    )
-    tracer.run_callable(runner)
-    return tracer.export_call_graph()
-
-
-def build_experiment_primes():
-    repo_root = "/Users/ashish/master-thesis/kg-guided-codegen/src/benchmarks/exp/demo"
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-
-    try:
-        import test_demo  # type: ignore
-        import demo  # type: ignore
-    except ImportError as e:
-        print(f"Error: Could not import demo or test_demo. Make sure {repo_root} is correct.")
-        print(f"Details: {e}")
-        sys.exit(1)
-
-    # Initialize tracer
-    tracer = DynamicCallGraphTracer(
-        repo_root,
-        include_external=False,
-        max_executions_per_node=25,
-        log_level=logging.WARNING  # Reduce verbosity for demo
-    )
-
-    def run_test_and_track(test_name, test_func):
-        # snapshot execution counts to see what was executed
-        counts_before = {fqn: data["execution_count"] for fqn, data in tracer._nodes.items()}
-        
-        passed = True
-        try:
-            # We use run_callable to trace the execution of the test
-            tracer.run_callable(test_func)
-        except AssertionError:
-            passed = False
-        except Exception as e:
-            # print(f"  Test {test_name} raised an exception: {e}")
-            passed = False
-        
-        # Determine executed nodes during this specific test
-        # A node was executed if its execution_count increased
-        executed_nodes = set()
-        for fqn, data in tracer._nodes.items():
-            if data["execution_count"] > counts_before.get(fqn, 0):
-                # EXCLUDE test code from suspiciousness calculation
-                # We only want to rank the actual source code
-                filename = os.path.basename(data.get("file", ""))
-                if not (filename.startswith("test_") or fqn.startswith("test_")):
-                    executed_nodes.add(fqn)
-        
-        tracer.add_test_result(test_name, passed=passed, executed_nodes=executed_nodes)
-        return passed
-
-    # Define the tests we want to run
-    passing_tests = [
-        ("test_fib", test_demo.test_fib),
-        ("test_is_divisible", test_demo.test_is_divisible),
-        ("test_is_prime_correct", test_demo.test_is_prime_correct),
-        ("test_is_prime_composites", test_demo.test_is_prime_composites),
-        ("test_is_prime_negatives", test_demo.test_is_prime_negatives),
-        ("test_fib_sequence", test_demo.test_fib_sequence),
-    ]
-
-    failing_tests = [
-        ("test_is_prime_bug", test_demo.test_is_prime_bug),
-        ("test_get_prime_fibs_bug", test_demo.test_get_prime_fibs_bug),
-        ("test_count_primes_up_to_10", test_demo.test_count_primes_up_to_10),
-        ("test_get_primes_in_range_1_to_10", test_demo.test_get_primes_in_range_1_to_10),
-        ("test_nth_prime_first", test_demo.test_nth_prime_first),
-        ("test_sum_of_primes", test_demo.test_sum_of_primes),
-    ]
-
-    print(f"\n{'='*60}")
-    print("Running Tests and Building Dynamic Call Graph")
-    print(f"{'='*60}")
-
-    print("\nRunning passing tests...")
-    for name, func in passing_tests:
-        res = run_test_and_track(name, func)
-        print(f"  {name}: {'PASSED' if res else 'FAILED (unexpected)'}")
-
-    print("\nRunning failing tests...")
-    for name, func in failing_tests:
-        res = run_test_and_track(name, func)
-        print(f"  {name}: {'PASSED (unexpected)' if res else 'FAILED'}")
-
-    # Export call graph with suspiciousness scores
-    g = tracer.export_call_graph()
-
-    print(f"\n{'='*60}")
-    print("Dynamic Call Graph with Tarantula Suspiciousness Scores")
-    print(f"{'='*60}")
-    print(f"Total nodes: {len(g.nodes)}")
-    print(f"Total edges: {len(g.edges)}")
-    print(f"Tests tracked: {len(tracer._test_results)}")
-    
-    # Display suspiciousness scores using the new method
-    print(f"\n{'='*60}")
-    print("Suspiciousness Scores (sorted by score, descending)")
-    print(f"{'='*60}")
-    
-    # We want to see nodes that have some suspiciousness
-    suspicious_nodes = g.get_suspicious_nodes(min_suspiciousness=0.01)
-    if not suspicious_nodes:
-        print("No suspicious nodes found (all scores are 0).")
-    else:
-        for node in suspicious_nodes:
-            print(f"  {node.fqn:40} : {node.suspiciousness:.4f} (executed {node.execution_count} times)")
-    
-    # Example: Get top 3 most suspicious nodes
-    print(f"\n{'='*60}")
-    print("Top 10 Most Suspicious Nodes")
-    print(f"{'='*60}")
-    top_suspicious = g.get_suspicious_nodes(min_suspiciousness=0.0, limit=10)
-    for i, node in enumerate(top_suspicious, 1):
-        print(f"  {i}. {node.fqn:40} : {node.suspiciousness:.4f}")
-    
-    # Export as json
-    output_path = "artifacts/demo_call_graph_dynamic_with_suspiciousness.json"
-    with open(output_path, "w") as f:
-         json.dump(g.model_dump(), f, indent=4)
-         print(f"\nSaved full graph to {output_path}")
-
-
-def build_experiment_library():
-    repo_root = "/Users/ashish/master-thesis/kg-guided-codegen/src/benchmarks/exp/library"
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-
-    try:
-        import test_catalog  # type: ignore
-        import test_borrowing  # type: ignore
-        import catalog  # type: ignore
-        import borrowing  # type: ignore
-    except ImportError as e:
-        print(f"Error: Could not import library modules or tests. Make sure {repo_root} is correct.")
-        print(f"Details: {e}")
-        sys.exit(1)
-
-    # Initialize tracer
-    tracer = DynamicCallGraphTracer(
-        repo_root,
-        include_external=False,
-        max_executions_per_node=25,
-        log_level=logging.WARNING
-    )
-
-    def run_test_and_track(test_name, test_func):
-        # snapshot execution counts to see what was executed
-        counts_before = {fqn: data["execution_count"] for fqn, data in tracer._nodes.items()}
-        
-        passed = True
-        try:
-            # Create an instance of the test class if needed, or just run the test function
-            # Since these are unittest.TestCase subclasses, we should ideally use a runner
-            # but for simplicity in this pipeline, we can instantiate and call the test methods.
+    for script_rel_path in scripts:
+        # Check if it's already an absolute path
+        if os.path.isabs(script_rel_path):
+            abs_path = script_rel_path
+        else:
+            abs_path = os.path.abspath(os.path.join(repo_root, script_rel_path))
             
-            if hasattr(test_func, "__self__") or (inspect.isfunction(test_func) and "." in test_func.__qualname__):
-                # It's a method, we might need to handle it differently if it was passed as Class.method
-                pass
+        if not os.path.exists(abs_path):
+            print(f"Warning: Script not found at {abs_path}")
+            continue
+
+        if test_mode:
+            # Discovery logic
+            module_name = os.path.basename(abs_path).replace(".py", "")
+            script_dir = os.path.dirname(abs_path)
             
-            tracer.run_callable(test_func)
-        except AssertionError:
-            passed = False
-        except Exception as e:
-            passed = False
-        
-        # Determine executed nodes during this specific test
-        executed_nodes = set()
-        for fqn, data in tracer._nodes.items():
-            if data["execution_count"] > counts_before.get(fqn, 0):
-                filename = os.path.basename(data.get("file", ""))
-                if not (filename.startswith("test_") or fqn.startswith("test_")):
-                    executed_nodes.add(fqn)
-        
-        tracer.add_test_result(test_name, passed=passed, executed_nodes=executed_nodes)
-        return passed
+            old_sys_path = list(sys.path)
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
 
-    # Instantiate test classes to get bound methods
-    catalog_tests = test_catalog.TestCatalog()
-    catalog_tests.setUp()
-    
-    borrowing_tests = test_borrowing.TestBorrowing()
-    borrowing_tests.setUp()
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, abs_path)
+                if spec is None or spec.loader is None:
+                    print(f"Error: Could not load {abs_path}")
+                    continue
+                
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                test_entries = []
+                # 1. Simple functions starting with test_
+                for name, obj in inspect.getmembers(module, inspect.isfunction):
+                    if name.startswith("test_"):
+                        test_entries.append((name, obj))
+                        
+                # 2. unittest.TestCase classes
+                for name, obj in inspect.getmembers(module, inspect.isclass):
+                    if issubclass(obj, unittest.TestCase) and obj is not unittest.TestCase:
+                        suite = unittest.TestLoader().loadTestsFromTestCase(obj)
+                        for test in suite:
+                            test_name = f"{name}.{test._testMethodName}"
+                            
+                            # Closure to capture the specific test instance
+                            def make_runner(t):
+                                def run_it():
+                                    t.setUp()
+                                    try:
+                                        getattr(t, t._testMethodName)()
+                                    finally:
+                                        t.tearDown()
+                                return run_it
+                                
+                            test_entries.append((test_name, make_runner(test)))
+                
+                if not test_entries:
+                    print(f"Warning: No tests discovered in {abs_path}. Running as plain script.")
+                    tracer.run_script(abs_path)
+                else:
+                    print(f"Discovered {len(test_entries)} tests in {abs_path}")
+                    for tname, tfunc in test_entries:
+                        tracer.run_test_and_track(tname, tfunc)
+            finally:
+                sys.path = old_sys_path
+        else:
+            # Plain script execution
+            tracer.run_script(abs_path)
 
-    passing_tests = [
-        ("test_get_book", catalog_tests.test_get_book),
-        ("test_search_by_title", catalog_tests.test_search_by_title),
-        ("test_search_by_author", catalog_tests.test_search_by_author),
-        ("test_mark_as_borrowed_and_returned", catalog_tests.test_mark_as_borrowed_and_returned),
-        ("test_borrow_success", borrowing_tests.test_borrow_success),
-        ("test_borrow_non_existent", borrowing_tests.test_borrow_non_existent),
-        ("test_return_on_time", borrowing_tests.test_return_on_time),
-        ("test_return_late", borrowing_tests.test_return_late),
-    ]
-
-    failing_tests = [
-        ("test_return_exactly_on_due_date", borrowing_tests.test_return_exactly_on_due_date),
-    ]
-
-    print(f"\n{'='*60}")
-    print("Running Library Experiment Tests and Building Dynamic Call Graph")
-    print(f"{'='*60}")
-
-    print("\nRunning passing tests...")
-    for name, func in passing_tests:
-        res = run_test_and_track(name, func)
-        print(f"  {name}: {'PASSED' if res else 'FAILED (unexpected)'}")
-
-    print("\nRunning failing tests...")
-    for name, func in failing_tests:
-        res = run_test_and_track(name, func)
-        print(f"  {name}: {'PASSED (unexpected)' if res else 'FAILED'}")
-
-    # Export call graph with suspiciousness scores
-    g = tracer.export_call_graph()
-
-    print(f"\n{'='*60}")
-    print("Library Dynamic Call Graph with Tarantula Suspiciousness Scores")
-    print(f"{'='*60}")
-    print(f"Total nodes: {len(g.nodes)}")
-    print(f"Total edges: {len(g.edges)}")
-    print(f"Tests tracked: {len(tracer._test_results)}")
-    
-    # Display top most suspicious nodes
-    print(f"\n{'='*60}")
-    print("Top 10 Most Suspicious Nodes (Library)")
-    print(f"{'='*60}")
-    top_suspicious = g.get_suspicious_nodes(min_suspiciousness=0.0, limit=10)
-    for i, node in enumerate(top_suspicious, 1):
-        print(f"  {i}. {node.fqn:40} : {node.suspiciousness:.4f}")
-    
-    # Export as json
-    output_path = "artifacts/library_call_graph_dynamic_with_suspiciousness.json"
-    with open(output_path, "w") as f:
-         json.dump(g.model_dump(), f, indent=4)
-         print(f"\nSaved full graph to {output_path}")
+    return tracer.export_call_graph()
 
 
 def run_dynamic_tracer_in_docker(
@@ -709,15 +561,18 @@ def run_dynamic_tracer_in_docker(
 
             # Run the tracer inside the container
             output_in_container = os.path.join(sandbox.sandbox_dir, config.output_file)
-            print(f"Sandbox: Running tracer for script {repo_def.trace_script}...")
+            print(f"Sandbox: Running tracer for scripts {repo_def.trace_scripts}...")
             
             debugger_path = os.path.join(sandbox.sandbox_dir, "debugger")
             repo_path = os.path.join(sandbox.sandbox_dir, "repo")
             
+            test_mode_flag = "--test-mode" if config.test_mode else ""
+            scripts_str = " ".join(repo_def.trace_scripts)
+            
             run_cmd = (
                 f"export PYTHONPATH=$PYTHONPATH:{debugger_path}:{repo_path} && "
                 f"python3 -m src.program_analysis.dynamic_call_graph "
-                f"--repo {repo_path} --script {repo_def.trace_script} --output {output_in_container}"
+                f"--repo {repo_path} --scripts {scripts_str} --output {output_in_container} {test_mode_flag}"
             )
             exit_code, stdout, stderr = sandbox.run_command(run_cmd)
             
@@ -761,26 +616,24 @@ def run_dynamic_tracer_in_docker(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Dynamic Call Graph Tracer")
     parser.add_argument("--repo", help="Path to the repository root")
-    parser.add_argument("--script", help="Path to the script to trace (relative to repo root)")
+    parser.add_argument("--scripts", nargs='+', help="Paths to the scripts to trace (relative to repo root)")
     parser.add_argument("--output", help="Path to save the output JSON", default="call_graph.json")
+    parser.add_argument("--test-mode", action="store_true", help="Run tests individually for fault localization")
     
     args = parser.parse_args()
     
-    if args.repo and args.script:
-        # Running INSIDE container (or directly via CLI), equivalent to 'uv run -m src.program_analysis.dynamic_call_graph'
-        print(f"Tracing repo: {args.repo} with script: {args.script}")
+    if args.repo and args.scripts:
+        # Running INSIDE container (or directly via CLI)
+        print(f"Tracing repo: {args.repo} with scripts: {args.scripts} (test-mode={args.test_mode})")
         
         repo_abs = os.path.abspath(args.repo)
         if repo_abs not in sys.path:
             sys.path.insert(0, repo_abs)
-            
-        script_path = os.path.join(repo_abs, args.script)
-        if not os.path.exists(script_path):
-            print(f"Error: Script not found at {script_path}")
-            sys.exit(1)
+
+        print(f"repo_abs: {repo_abs}")
             
         # Run tracing
-        call_graph = build_dynamic_call_graph_for_script(repo_abs, script_path)
+        call_graph = trace_repo(repo_abs, args.scripts, test_mode=args.test_mode)
         
         # Save output
         with open(args.output, "w") as f:
@@ -793,17 +646,32 @@ if __name__ == "__main__":
         
         # Use absolute path for the host repo
         demo_repo = os.path.abspath("src/benchmarks/exp/demo")
-        demo_script = "test_demo.py"
+        demo_scripts = ["test_demo.py"]
         
-        repo_def = RepoDefinition(repo_path=demo_repo, trace_script=demo_script)
-        config = DockerTracerConfig(keep_alive=False, output_file="demo_docker_call_graph.json")
+        repo_def = RepoDefinition(repo_path=demo_repo, trace_scripts=demo_scripts)
+        # Enable test_mode to get the exact same behavior as the local demo
+        config = DockerTracerConfig(
+            keep_alive=True, 
+            output_file="demo_docker_call_graph_updated.json",
+            test_mode=True
+        )
         
         try:
             cg = run_dynamic_tracer_in_docker(repo_def, config)
             print(f"\nSUCCESS: Built call graph with {len(cg.nodes)} nodes and {len(cg.edges)} edges.")
             print(f"Result saved to artifacts/{config.output_file}")
+            
+            # Show top suspicious nodes if any
+            suspicious = cg.get_suspicious_nodes(min_suspiciousness=0.01, limit=5)
+            if suspicious:
+                print("\nTop 5 Suspicious Nodes from Dockerized Trace:")
+                for node in suspicious:
+                    print(f"  {node.fqn:40} : {node.suspiciousness:.4f}")
+                    
         except Exception as e:
             print(f"\nPIPELINE FAILED: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
 
    
