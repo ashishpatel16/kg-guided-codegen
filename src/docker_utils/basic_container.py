@@ -32,10 +32,12 @@ class SimpleDockerSandbox:
         image_name: str = "python:3.11-slim",
         sandbox_dir: str = "/codebase",
         keep_alive: bool = False,
+        volumes: dict = None,
     ):
         self.image_name = image_name
         self.sandbox_dir = sandbox_dir
         self.keep_alive = keep_alive
+        self.volumes = volumes or {}
         self.client = docker.from_env()
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(
@@ -64,6 +66,7 @@ class SimpleDockerSandbox:
             tty=True,
             working_dir=self.sandbox_dir,  # Sets default dir and creates it if missing
             labels={"created_by": "SimpleDockerSandbox"},
+            volumes=self.volumes,
         )
         self.logger.info(f"Container {self.container.id} started")
         return self.container
@@ -93,13 +96,14 @@ class SimpleDockerSandbox:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def run_command(self, command: str, workdir: str = None) -> Tuple[int, str, str]:
+    def run_command(self, command: str, workdir: str = None, verbose: bool = False) -> Tuple[int, str, str]:
         """
         Executes a bash command in the container.
 
         Args:
             command: The command to run.
             workdir: Optional working directory. Defaults to sandbox_dir.
+            verbose: If True, stream the output to stdout/stderr in real-time.
 
         Returns:
             Tuple containing (exit_code, stdout, stderr).
@@ -109,6 +113,22 @@ class SimpleDockerSandbox:
 
         if workdir is None:
             workdir = self.sandbox_dir
+
+        if verbose:
+            # Use low-level API for streaming with exit code
+            exec_instance = self.client.api.exec_create(
+                self.container.id, cmd=["bash", "-c", command], workdir=workdir
+            )
+            exec_id = exec_instance["Id"]
+            output_gen = self.client.api.exec_start(exec_id, stream=True)
+            
+            full_output = b""
+            for chunk in output_gen:
+                full_output += chunk
+                print(chunk.decode("utf-8", errors="replace"), end="", flush=True)
+            
+            exit_code = self.client.api.exec_inspect(exec_id)["ExitCode"]
+            return exit_code, full_output.decode("utf-8", errors="replace"), ""
 
         result = self.container.exec_run(
             cmd=["bash", "-c", command], workdir=workdir, demux=True
