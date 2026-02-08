@@ -11,6 +11,7 @@ from src.agent.nodes import (
     generate_hypothesis,
     evaluate_evidence,
     generate_reflection,
+    initialize_debugging_scores,
     select_target_node,
     generate_inspection_patch,
     execute_inspection,
@@ -19,7 +20,7 @@ from src.agent.nodes import (
 from src.agent.state import OneShotCodeGenState, DebuggingState
 
 logger = logging.getLogger(__name__)
-
+CONFIDENCE_THRESHOLD = 0.9
 
 def should_stop(state: OneShotCodeGenState) -> bool:
     """
@@ -63,12 +64,14 @@ def build_one_shot_codegen_agent():
 
 def should_continue_debugging(state: DebuggingState) -> bool:
     """
-    Check if any node's suspiciousness has exceeded 1.0.
+    Check if any node's confidence_score has exceeded the target threshold (e.g., 0.9).
     """
     call_graph = state.get("call_graph")
+    threshold = CONFIDENCE_THRESHOLD
     for node in call_graph["nodes"]:
-        if node.get("suspiciousness", 0) > 1.0:
-            logger.info(f"Target found: {node['fqn']} has suspiciousness > 1.0")
+        score = node.get("confidence_score", 0)
+        if score >= threshold:
+            logger.info(f"Target found: {node['fqn']} has confidence_score {score:.3f} >= {threshold}")
             return True
     return False
 
@@ -82,13 +85,15 @@ def build_debugging_agent():
     builder = StateGraph[DebuggingState, None, DebuggingState, DebuggingState](DebuggingState)
 
     # Nodes
+    builder.add_node("initialize_debugging_scores", initialize_debugging_scores)
     builder.add_node("select_target_node", select_target_node)
     builder.add_node("generate_inspection_patch", generate_inspection_patch)
     builder.add_node("execute_inspection", execute_inspection)
     builder.add_node("update_suspiciousness_and_reflect", update_suspiciousness_and_reflect)
 
     # Edges
-    builder.add_edge(START, "select_target_node")
+    builder.add_edge(START, "initialize_debugging_scores")
+    builder.add_edge("initialize_debugging_scores", "select_target_node")
     builder.add_edge("select_target_node", "generate_inspection_patch")
     builder.add_edge("generate_inspection_patch", "execute_inspection")
     builder.add_edge("execute_inspection", "update_suspiciousness_and_reflect")

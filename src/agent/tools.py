@@ -13,6 +13,17 @@ from src.llm.connector import (
     GeminiLLMConnector,
 )
 
+from src.agent.prompts import (
+    DEFAULT_SYSTEM_INSTRUCTIONS,
+    GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS,
+    GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
+    EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
+    GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS,
+    GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS,
+    GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS,
+)
+from src.docker_utils.basic_container import SimpleDockerSandbox
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -52,17 +63,6 @@ def find_function_end_line(file_path: str, start_line: int) -> int:
     except Exception as e:
         print(f"DEBUG: Error in find_function_end_line: {e}")
     return 0
-
-from src.agent.prompts import (
-    DEFAULT_SYSTEM_INSTRUCTIONS,
-    GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS,
-    GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
-    EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
-    GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS,
-    GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS,
-    GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS,
-)
-from src.docker_utils.basic_container import SimpleDockerSandbox
 
 
 def configure_logging(level: str | None = None) -> None:
@@ -352,7 +352,9 @@ def run_local_command(command: str) -> str:
 
 
 def build_inspection_patch_prompt(target_node: str, source_code: str) -> str:
-    prompt = f"""{GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS}
+    # Use simple replacement to interpolate the target node into the instructions
+    system_instructions = GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS.replace("{target_node}", target_node)
+    prompt = f"""{system_instructions}
 
     Target Function: {target_node}
     Source Code:
