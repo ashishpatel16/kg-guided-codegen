@@ -24,11 +24,13 @@ class BugsInPyDockerSandbox:
         # Absolute paths on host
         self.host_bugsinpy_root = Path(bugsinpy_root).resolve()
         self.host_experiments_dir = Path(experiments_dir).resolve()
+        self.host_repo_root = Path(__file__).resolve().parent.parent.parent
         
         # Paths in container
         self.container_bugsinpy_home = "/home/bugsinpy"
         self.container_workspace = "/home/workspace"
         self.container_project_root = f"{self.container_workspace}/{project_name}"
+        self.container_debugger_root = "/home/debugger"
         
         # Volumes to mount
         volumes = {
@@ -43,6 +45,10 @@ class BugsInPyDockerSandbox:
             str(self.host_experiments_dir): {
                 "bind": self.container_workspace,
                 "mode": "rw",
+            },
+            str(self.host_repo_root): {
+                "bind": self.container_debugger_root,
+                "mode": "ro",
             },
         }
         
@@ -67,12 +73,54 @@ class BugsInPyDockerSandbox:
         logger.info("Installing BugsInPy dependencies in container...")
         self.sandbox.run_command("apt-get update && apt-get install -y git dos2unix", verbose=True)
         
+        # Install tracer dependencies in system python (for general use)
+        self.sandbox.run_command("pip install networkx pydantic tree-sitter tree-sitter-python docker", verbose=True)
+        
         # Set environment variables
         self.bugsinpy_bin = f"{self.container_bugsinpy_home}/framework/bin"
         self.env_vars = {
             "BUGSINPY_HOME": self.container_bugsinpy_home,
             "PATH": f"{self.bugsinpy_bin}:/usr/local/bin:/usr/bin:/bin"
         }
+
+    def run_dynamic_tracer(self, output_file: str = "call_graph.json") -> Tuple[int, str, str]:
+        """
+        Runs the dynamic tracer on the checked-out bug case.
+        """
+        logger.info(f"Running dynamic tracer for {self.project_name}...")
+        
+        # 1. Get test info from bugsinpy_bug.info
+        exit_code, stdout, _ = self.sandbox.run_command(
+            f"grep 'test_file=' {self.container_project_root}/bugsinpy_bug.info"
+        )
+        if exit_code != 0:
+            return 1, "", "Could not find test_file info"
+        
+        # Parse test_file="path/to/test.py"
+        test_file_line = stdout.strip()
+        test_file = test_file_line.split('"')[1].split(';')[0] # Take first test file if multiple
+        
+        # 2. Prepare paths
+        venv_python = f"{self.container_project_root}/env/bin/python"
+        debugger_module = "src.program_analysis.dynamic_call_graph"
+        output_path = f"{self.container_project_root}/{output_file}"
+        
+        # 3. Install tracer dependencies in the project venv
+        logger.info("Installing tracer dependencies in project venv...")
+        self.sandbox.run_command(f"{venv_python} -m pip install networkx pydantic tree-sitter tree-sitter-python docker")
+        
+        # 4. Run the tracer
+        # We need to set PYTHONPATH to include the debugger root and the repo root
+        run_cmd = (
+            f"export PYTHONPATH=$PYTHONPATH:{self.container_debugger_root}:{self.container_project_root} && "
+            f"{venv_python} -m {debugger_module} "
+            f"--repo {self.container_project_root} "
+            f"--scripts {test_file} "
+            f"--output {output_path} "
+            f"--test-mode"
+        )
+        
+        return self.sandbox.run_command(run_cmd, verbose=True)
         
     def _run_bugsinpy_cmd(self, cmd_name: str, args: List[str], workdir: Optional[str] = None, verbose: bool = False) -> Tuple[int, str, str]:
         """Runs a bugsinpy command with the correct environment."""
@@ -145,7 +193,7 @@ if __name__ == "__main__":
     bug = "1"
     
     with BugsInPyDockerSandbox(project, bug) as bspy:
-        exit_code, out, err = bspy.checkout(version=1)
+        exit_code, out, err = bspy.checkout(version=0)
         if exit_code != 0:
             print(f"Checkout failed: {err}")
         else:
@@ -165,3 +213,15 @@ if __name__ == "__main__":
                     f"cat {bspy.container_project_root}/bugsinpy_fail.txt"
                 )
                 print(f"Failure details:\n{fail_details}")
+
+            # NEW: Run the dynamic tracer
+            print("\n" + "="*50)
+            print("RUNNING DYNAMIC TRACER")
+            print("="*50)
+            exit_code, out, err = bspy.run_dynamic_tracer()
+            print(f"Tracer exit code: {exit_code}")
+            if exit_code == 0:
+                print("Tracer finished successfully.")
+                # The output is at experiments/youtube-dl_1/youtube-dl/call_graph.json on host
+            else:
+                print(f"Tracer failed: {err}")
