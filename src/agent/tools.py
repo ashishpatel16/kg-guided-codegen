@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import docker
 
 from src.llm.connector import (
     OllamaLLMConnector,
@@ -327,6 +328,35 @@ def apply_function_source(node: dict, new_source: str) -> bool:
     except Exception as e:
         logger.error(f"Error applying patch to {file_path}: {e}")
         return False
+
+
+def run_command(command: str, container_id: str | None = None, workdir: str | None = None) -> str:
+    """Run a command either locally or in a Docker container."""
+    if container_id:
+        logger.info(f"Running command in container {container_id}: {command}")
+        try:
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+            
+            # Use bash -c to support pipes, redirects, etc.
+            exec_res = container.exec_run(
+                cmd=["bash", "-c", command],
+                workdir=workdir,
+                demux=True
+            )
+            
+            stdout = exec_res.output[0].decode("utf-8", errors="replace") if exec_res.output[0] else ""
+            stderr = exec_res.output[1].decode("utf-8", errors="replace") if exec_res.output[1] else ""
+            
+            return (
+                f"Exit Code: {exec_res.exit_code}\n"
+                f"STDOUT:\n{stdout}\n"
+                f"STDERR:\n{stderr}"
+            )
+        except Exception as e:
+            return f"Error running command in container: {e}"
+    else:
+        return run_local_command(command)
 
 
 def run_local_command(command: str) -> str:

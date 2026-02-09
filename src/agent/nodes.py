@@ -18,7 +18,7 @@ from src.agent.tools import (
     build_reflection_prompt,
     get_function_source,
     apply_function_source,
-    run_local_command,
+    run_command,
     build_inspection_patch_prompt,
     build_debugging_reflection_prompt,
     find_test_files_for_node,
@@ -394,15 +394,36 @@ def execute_inspection(state: DebuggingState) -> Dict[str, Any]:
     target_fqn = state.get("target_node")
     call_graph = state.get("call_graph")
     
+    container_id = state.get("container_id")
+    container_workspace = state.get("container_workspace")
+    host_workspace = state.get("host_workspace")
+
     # 1. Determine which test to run
     test_files = find_test_files_for_node(call_graph, target_fqn)
+    
     if test_files:
-        # Run only the relevant test files
-        test_command = f"pytest {' '.join(test_files)}"
+        # If running in Docker, we need to map host paths back to container paths
+        if container_id and container_workspace and host_workspace:
+            mapped_test_files = []
+            for tf in test_files:
+                if tf.startswith(host_workspace):
+                    mapped_test_files.append(tf.replace(host_workspace, container_workspace))
+                else:
+                    mapped_test_files.append(tf)
+            test_files = mapped_test_files
+
+        # Use a robust pytest command (python -m pytest)
+        test_command = f"python3 -m pytest {' '.join(test_files)}"
+        
+        # If we have a project-specific venv in the container, try to use its python
+        if container_id and container_workspace:
+            # Check if env/bin/python exists in the container 
+            test_command = f"if [ -f env/bin/python ]; then ./env/bin/python -m pytest {' '.join(test_files)}; else python3 -m pytest {' '.join(test_files)}; fi"
+            
         logger.info(f"Inferred test command: {test_command}")
     else:
         # Fallback to configured or default test command
-        test_command = state.get("test_command", "pytest")
+        test_command = state.get("test_command", "python3 -m pytest")
         logger.warning(f"No specific test files found for {target_fqn}, using fallback: {test_command}")
 
     node = next((n for n in call_graph["nodes"] if n["fqn"] == target_fqn), None)
@@ -419,9 +440,12 @@ def execute_inspection(state: DebuggingState) -> Dict[str, Any]:
         logger.error(f"execute_inspection: failed to apply patch to {target_fqn}")
         return {"execution_result": "Error: Failed to apply patch to file."}
 
-    # 3. Run local execution
+    # 3. Run execution (local or docker)
     try:
-        result = run_local_command(test_command)
+        if container_id:
+            result = run_command(test_command, container_id=container_id, workdir=container_workspace)
+        else:
+            result = run_command(test_command)
     finally:
         # 4. Restore original source
         logger.info(f"execute_inspection: restoring original source for {target_fqn}")
