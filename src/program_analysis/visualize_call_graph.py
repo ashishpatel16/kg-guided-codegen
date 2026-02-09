@@ -650,7 +650,7 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
     print(f"Visualization generated at: {output_path}")
 
 if __name__ == "__main__":
-    json_path = "/Users/ashish/master-thesis/kg-guided-codegen/experiments/youtube-dl/call_graph.json"
+    json_path = "experiments/youtube-dl/call_graph_youtube-dl_1.json"
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found. Run the dynamic call graph script first.")
         sys.exit(1)
@@ -659,4 +659,4 @@ if __name__ == "__main__":
         data = json.load(f)
     
     os.makedirs("artifacts", exist_ok=True)
-    generate_html(data, "/Users/ashish/master-thesis/kg-guided-codegen/experiments/youtube-dl/call_graph.html")
+    generate_html(data, "experiments/youtube-dl/call_graph.html")

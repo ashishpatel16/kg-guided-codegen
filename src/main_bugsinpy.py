@@ -40,17 +40,8 @@ def run_bugsinpy_debugging(project_name: str, bug_id: str):
             return
 
         # 3. Load the Call Graph
-        # The tracer saves the file in the container project root, 
-        # which is mounted to host_experiments_dir / project_name_bug_id / project_name
-        # But bspy.run_dynamic_tracer saves it in self.container_project_root / output_filename
-        # We can find it on the host:
         host_experiments_dir = bspy.host_experiments_dir
-        # The experiments dir structure depends on how BugsInPyDockerSandbox is implemented.
-        # Looking at setup_bugsinpy_docker.py:
-        # self.container_workspace = "/home/workspace"
-        # self.container_project_root = f"{self.container_workspace}/{project_name}"
-        # Experiments dir is mounted to /home/workspace.
-        # bugsinpy-checkout -w /home/workspace creates /home/workspace/project_name
+        
         
         call_graph_path = host_experiments_dir / project_name / output_filename
         if not os.path.exists(call_graph_path):

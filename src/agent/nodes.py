@@ -298,6 +298,12 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
             node["confidence_score"] = uniform_score
     
     logger.info(f"Initialized and normalized confidence scores for {len(nodes)} nodes.")
+
+    # Print the confidence score for top 10 nodes along with their suspiciousness
+    print("*"*100)
+    for node in sorted(nodes, key=lambda x: x.get("confidence_score", 0.0), reverse=True)[:10]:
+        print(f"{node['fqn']}: confidence_score={node.get('confidence_score', 0.0):.4f}, suspiciousness={node.get('suspiciousness', 0.0):.4f}")
+    print("*"*100, "\n\n")
     return {"call_graph": call_graph}
 
 
