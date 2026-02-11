@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import logging
 import os
 import time
+import re
 from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -266,6 +265,7 @@ def generate_reflection(state: OneShotCodeGenState) -> Dict[str, Any]:
         "history": [history_entry]
     }
 
+
 # TODO: Test the distribution thoroughly
 def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     """
@@ -475,38 +475,59 @@ def execute_inspection(state: DebuggingState) -> Dict[str, Any]:
 
 def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
     """
-    Updates the suspiciousness score using a formal Bayesian update based on execution artifacts.
+    Updates the suspiciousness score using a formal Bayesian update based on execution artifacts
+    and LLM-based reflection.
     """
-    logger.info("update_suspiciousness_and_reflect: start (Bayesian Mode)")
+    logger.info("update_suspiciousness_and_reflect: start (Integrated Bayesian Mode)")
     target_fqn = state.get("target_node")
     call_graph = state.get("call_graph")
     execution_result = str(state.get("execution_result", ""))
+    patch = state.get("inspection_patch")
     
     node = next((n for n in call_graph["nodes"] if n["fqn"] == target_fqn), None)
     if not node:
         raise ValueError(f"Node {target_fqn} not found")
 
-    # Bayesian Prior: use existing confidence_score (guaranteed to exist now)
-    prior = node.get("confidence_score", 0.5)
+    # 1. LLM Reflection (Quantitative Guidance)
+    # We run this FIRST so the qualitative decision can guide the Bayesian likelihoods.
+    source_code = get_function_source(node)
+    prompt = build_debugging_reflection_prompt(
+        target_fqn, source_code, patch, execution_result
+    )
+    llm = get_default_llm_connector()
+    reflection = llm.generate(prompt)
     
-    # 1. Detect Formal Signals
+    # Check for decision (case-insensitive search in the last few lines)
+    last_lines = reflection.strip().splitlines()[-3:]
+    is_llm_buggy = any("CONFIRMED_BUGGY" in line for line in last_lines)
+    is_llm_not_buggy = any("CONFIRMED_NOT_BUGGY" in line for line in last_lines)
+
+    # 2. Detect Formal Signals
     heartbeat_msg = f"--- INSPECTION_START: {target_fqn} ---"
     is_covered = heartbeat_msg in execution_result
     
-    # Check if an AssertionError occurred in the target file
-    target_file_short = os.path.basename(node.get("file", ""))
+    # Check if an AssertionError occurred in the target file (strict matching)
+    target_file = node.get("file", "")
+    target_file_pattern = rf'File ".*{re.escape(os.path.basename(target_file))}", line \d+'
     has_target_assertion = (
-        "AssertionError" in execution_result and target_file_short in execution_result
+        "AssertionError" in execution_result and re.search(target_file_pattern, execution_result) is not None
     )
 
     is_failure = "Exit Code: 0" not in execution_result
 
-    # 2. Determine Likelihoods P(E|Buggy) and P(E|NotBuggy)
+    # 3. Determine Likelihoods P(E|Buggy) and P(E|NotBuggy)
+    prior = node.get("confidence_score", 0.5)
+
     if has_target_assertion:
         # Case A: Formal proof of failure in target
-        p_e_given_buggy = 0.95
-        p_e_given_not_buggy = 0.05
-        outcome = "TARGET_ASSERTION_FAILED"
+        if is_llm_not_buggy:
+            p_e_given_buggy = 0.60
+            p_e_given_not_buggy = 0.40
+            outcome = "TARGET_ASSERTION_FAILED_BUT_LLM_DISAGREES"
+        else:
+            p_e_given_buggy = 0.95
+            p_e_given_not_buggy = 0.05
+            outcome = "TARGET_ASSERTION_FAILED"
     elif is_covered and not is_failure:
         # Case B: Formal proof of success (covered and passed)
         p_e_given_buggy = 0.10
@@ -514,21 +535,29 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
         outcome = "COVERED_AND_PASSED"
     elif is_failure and not has_target_assertion:
         # Case C: Collateral failure (test failed but not obviously here)
-        p_e_given_buggy = 0.60
-        p_e_given_not_buggy = 0.40
-        outcome = "COLLATERAL_FAILURE"
+        if is_llm_buggy:
+            p_e_given_buggy = 0.70
+            p_e_given_not_buggy = 0.30
+            outcome = "COLLATERAL_FAILURE_LLM_SUSPICIOUS"
+        elif is_llm_not_buggy:
+            p_e_given_buggy = 0.40
+            p_e_given_not_buggy = 0.60
+            outcome = "COLLATERAL_FAILURE_LLM_INNOCENT"
+        else:
+            p_e_given_buggy = 0.60
+            p_e_given_not_buggy = 0.40
+            outcome = "COLLATERAL_FAILURE"
     elif not is_covered:
         # Case D: Uninformative (not covered)
         p_e_given_buggy = 0.50
         p_e_given_not_buggy = 0.50
         outcome = "NO_COVERAGE"
     else:
-        # Default/Fallback
         p_e_given_buggy = 0.50
         p_e_given_not_buggy = 0.50
         outcome = "INCONCLUSIVE"
 
-    # 3. Apply Bayes Theorem
+    # 4. Apply Bayes Theorem
     # P(B|E) = (P(E|B) * P(B)) / (P(E|B) * P(B) + P(E|~B) * P(~B))
     denominator = (p_e_given_buggy * prior) + (p_e_given_not_buggy * (1 - prior))
     if denominator == 0:
@@ -536,18 +565,9 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
     else:
         posterior = (p_e_given_buggy * prior) / denominator
     
-    # Clamp and update confidence_score (do not touch suspiciousness)
+    # Clamp and update confidence_score
     node["confidence_score"] = max(0.01, min(0.99, posterior))
     
-    # 4. LLM Reflection (Now secondary, for reasoning only)
-    source_code = get_function_source(node)
-    patch = state.get("inspection_patch")
-    prompt = build_debugging_reflection_prompt(
-        target_fqn, source_code, patch, execution_result
-    )
-    llm = get_default_llm_connector()
-    reflection = llm.generate(prompt)
-
     logger.info(
         f"Bayesian Update for {target_fqn}: outcome={outcome}, "
         f"prior={prior:.3f} -> posterior={node['confidence_score']:.3f}"
