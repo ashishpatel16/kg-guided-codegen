@@ -404,6 +404,7 @@ class DynamicCallGraphTracer:
                     avg_duration=float(avg_duration),
                     covered=execution_count > 0,
                     suspiciousness=0.0,
+                    confidence_score=0.0,
                     analysis_type="dynamic",
                 )
             )

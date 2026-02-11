@@ -74,7 +74,7 @@ class BugsInPyDockerSandbox:
         self.sandbox.run_command("apt-get update && apt-get install -y git dos2unix", verbose=True)
         
         # Install tracer dependencies in system python (for general use)
-        self.sandbox.run_command("pip install networkx pydantic tree-sitter tree-sitter-python docker", verbose=True)
+        self.sandbox.run_command("pip install networkx pydantic pytest tree-sitter tree-sitter-python docker", verbose=True)
         
         # Set environment variables
         self.bugsinpy_bin = f"{self.container_bugsinpy_home}/framework/bin"
@@ -107,7 +107,7 @@ class BugsInPyDockerSandbox:
         
         # 3. Install tracer dependencies in the project venv
         logger.info("Installing tracer dependencies in project venv...")
-        self.sandbox.run_command(f"{venv_python} -m pip install networkx pydantic tree-sitter tree-sitter-python docker")
+        self.sandbox.run_command(f"{venv_python} -m pip install networkx pydantic pytest tree-sitter tree-sitter-python docker")
         
         # 4. Run the tracer
         # We need to set PYTHONPATH to include the debugger root and the repo root

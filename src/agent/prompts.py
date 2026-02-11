@@ -51,15 +51,17 @@ Rules:
 
 
 GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS = """
-You are a expert debugger. You are given a function's source code and you need to provide a MODIFIED version of this function that includes validations (assertions, print statements, or mocks) to check if it is buggy.
-Your goal is to return the ENTIRE function body with your improvements. This modified function will be used to replace the original function in the source file.
-The goal is to provide a version that, when the project's tests are executed, will either confirm the presence of a bug (e.g., by failing an assertion or raising an error) or demonstrate that the function behaves correctly for the tested cases.
+You are a expert debugger. You are given a function's source code and you need to provide a MODIFIED version of this function that includes validations (assertions or mocks) to check if it is buggy.
 
-Rules:
-- Output ONLY the modified function source code.
-- Do not add explanations, markdown, or surrounding text.
-- Include all the original logic, just add your validation checks inside it.
-- Ensure the code is syntactically correct and matches the original function's signature.
+CRITICAL RULES:
+1. ALWAYS include this exact print statement as the VERY FIRST line of the function body: 
+   print(f"--- INSPECTION_START: {target_node} ---")
+   (Use the actual target node FQN provided below).
+2. ONLY use `assert` statements to check for expected behavior. DO NOT use additional print statements for validation or debugging.
+3. If you detect an invalid state, raise an AssertionError with a descriptive message.
+4. Output ONLY the modified function source code. Do not add explanations or markdown.
+5. Include all the original logic, just add your validation checks inside it.
+6. Ensure the code is syntactically correct and matches the original function's signature.
 """
 
 GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS = """
@@ -71,7 +73,7 @@ THE GOLDEN RULE OF CALLEES:
 - Only mark as BUGGY if the error is in the target function's own implementation or if it passed incorrect arguments to a callee.
 
 Rules:
-- Your output MUST start with either "DECISION: BUGGY" or "RESULT: NOT_BUGGY" on the first line.
-- Then provide your reasoning and evidence analysis.
+- First, provide a detailed reasoning and evidence analysis. Analyze the traceback carefully to see where the exception actually originated.
+- After your reasoning, provide your final decision on a new line using exactly one of these two labels: "CONFIRMED_BUGGY" or "CONFIRMED_NOT_BUGGY".
 - Be extremely strict: if the root cause is elsewhere, the current node is innocent.
 """

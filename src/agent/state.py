@@ -69,6 +69,12 @@ class DebuggingState(TypedDict, total=False):
     # Configuration
     score_delta: float
     test_command: str
+    
+    # Docker Support
+    container_id: str
+    container_workspace: str
+    host_workspace: str
+    use_docker: bool
 
     # Event logging
     history: Annotated[list[dict], operator.add]

@@ -72,11 +72,22 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
             
             # Prepare styling
             score = n.get("suspiciousness", 0) or 0
-            r = int(34 + (239 - 34) * score)
-            g = int(197 + (68 - 197) * score)
-            b = int(94 + (68 - 94) * score)
-            hex_color = f"#{r:02x}{g:02x}{b:02x}"
-            node_styles.append(f"    style {node_id} fill:{hex_color},stroke:#333,stroke-width:1px,color:#fff")
+            
+            # Logic: If it's a test file, make it gray instead of green/red
+            file_path = n.get("file", "").lower()
+            is_test = "test" in file_path or "test" in n["fqn"].lower()
+            
+            if is_test:
+                hex_color = "#ffffff" # White for tests
+                text_color = "#333"
+            else:
+                r = int(34 + (239 - 34) * score)
+                g = int(197 + (68 - 197) * score)
+                b = int(94 + (68 - 94) * score)
+                hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                text_color = "#fff"
+                
+            node_styles.append(f"    style {node_id} fill:{hex_color},stroke:#333,stroke-width:1px,color:{text_color}")
         mermaid_lines.append("    end")
         # Style the subgraph itself
         node_styles.append(f"    style {subgraph_id} fill:#fef9c3,stroke:#facc15,stroke-width:2px,stroke-dasharray: 5 5")
@@ -481,8 +492,9 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
         const nodes = {json.dumps(nodes)};
         let panZoomInstance = null;
 
-        function getSuspiciousColor(score) {{
-            if (score === null || score < 0) return '#94a3b8';
+        function getSuspiciousColor(score, isTest = false) {{
+            if (isTest) return '#ffffff'; // White for test files
+            if (score === null || score < 0) return '#ffffff';
             const r = Math.floor(34 + (239 - 34) * score);
             const g = Math.floor(197 + (68 - 197) * score);
             const b = Math.floor(94 + (68 - 94) * score);
@@ -495,7 +507,7 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
             
             const filteredNodes = nodes.filter(n => 
                 n.fqn.toLowerCase().includes(filter.toLowerCase()) || 
-                n.file.toLowerCase().includes(filter.toLowerCase())
+                (n.file && n.file.toLowerCase().includes(filter.toLowerCase()))
             ).sort((a, b) => (b.suspiciousness || 0) - (a.suspiciousness || 0));
 
             filteredNodes.forEach(node => {{
@@ -506,12 +518,14 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
                 }};
                 
                 const score = node.suspiciousness || 0;
-                const color = getSuspiciousColor(score);
+                const isTest = (node.file && node.file.toLowerCase().includes('test')) || node.fqn.toLowerCase().includes('test');
+                const color = getSuspiciousColor(score, isTest);
+                const textColor = isTest ? '#333' : '#fff';
 
                 div.innerHTML = `
                     <div class="node-header">
                         <span class="node-fqn">${{node.fqn}}</span>
-                        <span class="suspiciousness-badge" style="background-color: ${{color}}">
+                        <span class="suspiciousness-badge" style="background-color: ${{color}}; color: ${{textColor}}">
                             ${{score.toFixed(3)}}
                         </span>
                     </div>
@@ -530,8 +544,13 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
             details.classList.remove('hidden');
 
             document.getElementById('detailFQN').innerText = node.fqn;
-            document.getElementById('detailSuspiciousness').innerText = (node.suspiciousness || 0).toFixed(4);
-            document.getElementById('detailSuspiciousness').style.color = getSuspiciousColor(node.suspiciousness || 0);
+            const score = node.suspiciousness || 0;
+            const isTest = (node.file && node.file.toLowerCase().includes('test')) || node.fqn.toLowerCase().includes('test');
+            
+            document.getElementById('detailSuspiciousness').innerText = score.toFixed(4);
+            const scoreColor = isTest ? '#64748b' : getSuspiciousColor(score, false);
+            document.getElementById('detailSuspiciousness').style.color = scoreColor;
+            
             document.getElementById('detailExecutions').innerText = node.execution_count;
             document.getElementById('detailDuration').innerText = (node.avg_duration * 1000).toFixed(2) + 'ms';
             document.getElementById('detailType').innerText = node.type;
@@ -650,7 +669,7 @@ def generate_html(json_data: Dict[str, Any], output_path: str):
     print(f"Visualization generated at: {output_path}")
 
 if __name__ == "__main__":
-    json_path = "/Users/ashish/master-thesis/kg-guided-codegen/experiments/youtube-dl/call_graph.json"
+    json_path = "artifacts/demo_docker_call_graph_updated.json"
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found. Run the dynamic call graph script first.")
         sys.exit(1)
@@ -659,4 +678,4 @@ if __name__ == "__main__":
         data = json.load(f)
     
     os.makedirs("artifacts", exist_ok=True)
-    generate_html(data, "/Users/ashish/master-thesis/kg-guided-codegen/experiments/youtube-dl/call_graph.html")
+    generate_html(data, "experiments/youtube-dl/call_graph.html")
