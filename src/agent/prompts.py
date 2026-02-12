@@ -49,6 +49,7 @@ Rules:
 - Do not add explanations, markdown, or surrounding text.
 """
 
+# Following are prompts for the debugging agent
 
 GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS = """
 You are a expert debugger. You are given a function's source code and you need to provide a MODIFIED version of this function that includes validations (assertions or mocks) to check if it is buggy.

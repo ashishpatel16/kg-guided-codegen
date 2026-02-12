@@ -522,7 +522,7 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
 
     is_failure = "Exit Code: 0" not in execution_result
 
-    # 3. Determine Likelihoods P(E|Buggy) and P(E|NotBuggy)
+    # 3. Likelihoods P(E|Buggy) and P(E|NotBuggy)
     prior = node.get("confidence_score", 0.5)
 
     if has_target_assertion:
