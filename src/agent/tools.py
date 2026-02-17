@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from src.agent.prompts import (
     GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS,
     GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS,
     GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS,
+    GENERATE_PATCH_SYSTEM_INSTRUCTIONS,
 )
 from src.docker_utils.basic_container import SimpleDockerSandbox
 
@@ -411,6 +413,19 @@ def build_debugging_reflection_prompt(
     return prompt
 
 
+def build_patch_prompt(target_node: str, source_code: str, reflection: str) -> str:
+    prompt = f"""{GENERATE_PATCH_SYSTEM_INSTRUCTIONS}
+
+    Target Function: {target_node}
+    Source Code:
+    {source_code}
+
+    Reflection:
+    {reflection}
+    """
+    return prompt
+
+
 def find_test_files_for_node(call_graph: dict, target_fqn: str) -> list[str]:
     """
     Find files that call the target node and look like test files.
@@ -448,3 +463,19 @@ def save_history(history: list[dict], file_path: str = "artifacts/agent_history.
         logger.info(f"Saved agent history to {file_path}")
     except Exception as e:
         logger.error(f"Error saving history to {file_path}: {e}")
+
+
+def generate_diff(original: str, patched: str, filename: str = "source.py") -> str:
+    """
+    Generate a unified diff between original and patched source code.
+    """
+    original_lines = original.splitlines(keepends=True)
+    patched_lines = patched.splitlines(keepends=True)
+    
+    diff = difflib.unified_diff(
+        original_lines,
+        patched_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}"
+    )
+    return "".join(diff)

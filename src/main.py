@@ -25,7 +25,6 @@ def run_one_shot_demo():
 
 def run_debugging_demo():
     print(debugging_agent.get_graph().draw_ascii())
-    return
 
     # Generate call graph in Docker
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -74,6 +73,14 @@ def run_debugging_demo():
     final_state = debugging_agent.invoke(initial_state, config={"recursion_limit": 100})
 
     print("\n** DEBUGGING COMPLETED **")
+    if "final_diff" in final_state:
+        print("\n** GENERATED PATCH DIFF **")
+        print(final_state["final_diff"])
+    else:
+        print("\nNo final patch was generated (threshold potentially not reached).")
+        if "inspection_diff" in final_state:
+            print("\n** LAST INSPECTION DIFF **")
+            print(final_state["inspection_diff"])
     # Find the node that caused termination
     culprit = next(
         (

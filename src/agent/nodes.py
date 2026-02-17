@@ -18,10 +18,12 @@ from src.agent.tools import (
     get_function_source,
     apply_function_source,
     run_command,
-    build_inspection_patch_prompt,
     build_debugging_reflection_prompt,
     find_test_files_for_node,
     save_history,
+    build_patch_prompt,
+    build_inspection_patch_prompt,
+    generate_diff,
 )
 
 logger = logging.getLogger(__name__)
@@ -393,8 +395,11 @@ def generate_inspection_patch(state: DebuggingState) -> Dict[str, Any]:
         }
     }
 
+    diff = generate_diff(source_code, patch, filename=node.get("file", "source.py"))
+
     return {
         "inspection_patch": patch,
+        "inspection_diff": diff,
         "original_source": source_code,
         "llm_calls": int(state.get("llm_calls") or 0) + 1,
         "history": [history_entry]
@@ -619,14 +624,49 @@ def generate_tests(state: DebuggingState) -> Dict[str, Any]:
 
 def generate_patch(state: DebuggingState) -> Dict[str, Any]:
     """
-    Placeholder for generating a fix patch for the localized bug.
-    Currently just prints a message and does nothing.
+    Generates a final fix patch for the localized bug based on reflection.
     """
     logger.info("generate_patch: Final bug fix phase.")
-    print("\n" + "*"*50)
-    print("DEBUG: generate_patch node reached. PATCHED")
-    print("*"*50 + "\n")
-    return {}
+    
+    target_fqn = state.get("target_node")
+    call_graph = state.get("call_graph")
+    reflection = state.get("reflection", "")
+    
+    if not target_fqn:
+        raise ValueError("target_node is required for generate_patch")
+        
+    node = next((n for n in call_graph["nodes"] if n["fqn"] == target_fqn), None)
+    if not node:
+        raise ValueError(f"Node {target_fqn} not found in call graph")
+        
+    source_code = get_function_source(node)
+    if not source_code:
+        raise ValueError(f"Could not fetch source code for {target_fqn}")
+        
+    prompt = build_patch_prompt(target_fqn, source_code, reflection)
+    llm = get_default_llm_connector()
+    raw_patch = llm.generate(prompt)
+    patch = extract_code(raw_patch)
+    
+    logger.info(f"generate_patch: done for {target_fqn}")
+    
+    history_entry = {
+        "node": "generate_patch",
+        "timestamp": time.time(),
+        "data": {
+            "target_node": target_fqn,
+            "patch": patch
+        }
+    }
+    
+    diff = generate_diff(source_code, patch, filename=node.get("file", "source.py"))
+
+    return {
+        "final_patch": patch,
+        "final_diff": diff,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+        "history": [history_entry]
+    }
 
 
 if __name__ == "__main__":

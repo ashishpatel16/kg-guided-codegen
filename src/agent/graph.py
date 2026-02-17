@@ -73,8 +73,14 @@ def should_continue_debugging(state: DebuggingState) -> bool:
     for node in call_graph["nodes"]:
         score = node.get("confidence_score", 0)
         if score >= threshold:
-            logger.info(f"Target found: {node['fqn']} has confidence_score {score:.3f} >= {threshold}")
+            logger.info(f"Target found: {node['fqn']} has confidence_score {score:.4f} >= {threshold}")
             return True
+    
+    # Log top score for debugging
+    if call_graph and "nodes" in call_graph:
+        top_node = max(call_graph["nodes"], key=lambda x: x.get("confidence_score", 0))
+        logger.info(f"Threshold not reached. Top node: {top_node['fqn']} score: {top_node.get('confidence_score', 0):.4f} (Threshold: {threshold})")
+    
     return False
     
 
