@@ -605,6 +605,30 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
     }
 
 
+def generate_tests(state: DebuggingState) -> Dict[str, Any]:
+    """
+    Placeholder for generating new test cases to improve fault localization.
+    Currently just prints a message and does nothing.
+    """
+    logger.info("generate_tests: Printing placeholder message. No tests generated yet.")
+    print("\n" + "="*50)
+    print("DEBUG: generate_tests node reached. Skipping generation for now.")
+    print("="*50 + "\n")
+    return {}
+
+
+def generate_patch(state: DebuggingState) -> Dict[str, Any]:
+    """
+    Placeholder for generating a fix patch for the localized bug.
+    Currently just prints a message and does nothing.
+    """
+    logger.info("generate_patch: Final bug fix phase.")
+    print("\n" + "*"*50)
+    print("DEBUG: generate_patch node reached. PATCHED")
+    print("*"*50 + "\n")
+    return {}
+
+
 if __name__ == "__main__":
     import json
     

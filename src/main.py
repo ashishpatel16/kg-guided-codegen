@@ -25,6 +25,7 @@ def run_one_shot_demo():
 
 def run_debugging_demo():
     print(debugging_agent.get_graph().draw_ascii())
+    return
 
     # Generate call graph in Docker
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
