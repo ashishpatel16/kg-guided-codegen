@@ -318,11 +318,18 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     if not nodes:
         raise ValueError("No nodes in call graph")
 
-    # Only consider nodes that have code (file, start_line)
+    # Only consider nodes that have code (file, start_line) and exclude obscure FQNs
+    # (e.g. demo.filter_primes.<locals>.<listcomp>, <lambda>, <genexpr>)
+    def _is_inspectable_fqn(fqn: str) -> bool:
+        if not fqn:
+            return False
+        # Exclude compiler-generated / obscure names: <listcomp>, <lambda>, <genexpr>, etc.
+        return ".<" not in fqn and not fqn.strip().startswith("<")
+
     valid_nodes = [
         n
         for n in nodes
-        if n.get("file") and n.get("start_line")
+        if n.get("file") and n.get("start_line") and _is_inspectable_fqn(n.get("fqn", ""))
     ]
     
     if not valid_nodes:
@@ -515,7 +522,7 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
 
     is_failure = "Exit Code: 0" not in execution_result
 
-    # 3. Determine Likelihoods P(E|Buggy) and P(E|NotBuggy)
+    # 3. Likelihoods P(E|Buggy) and P(E|NotBuggy)
     prior = node.get("confidence_score", 0.5)
 
     if has_target_assertion:

@@ -24,7 +24,6 @@ def run_one_shot_demo():
 
 
 def run_debugging_demo():
-    print("=== DEBUGGING AGENT DEMO ===")
     print(debugging_agent.get_graph().draw_ascii())
 
     # Generate call graph in Docker
