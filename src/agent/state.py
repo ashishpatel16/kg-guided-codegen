@@ -74,6 +74,10 @@ class DebuggingState(TypedDict, total=False):
     # Configuration
     score_delta: float
     test_command: str
+
+    # Discovered tests and coverage (Innovation: Fault Localization baseline)
+    tests: list[str]  # List of test function FQNs or file paths
+    coverage_matrix: dict[str, list[str]]  # Node FQN -> List of Test FQNs that cover it
     
     # Docker Support
     container_id: str

@@ -45,20 +45,28 @@ def find_function_end_line(file_path: str, start_line: int) -> int:
         best_node = None
         min_distance = float('inf')
 
+        nodes_found = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                nodes_found.append((node.name, node.lineno, node.end_lineno))
                 # Exact match is always preferred
                 if node.lineno == start_line:
                     return node.end_lineno
                 
-                # Check for fuzzy match (decorators or line-offset from tracer)
+                # Check for fuzzy match
                 dist = abs(node.lineno - start_line)
                 if dist <= 5 and dist < min_distance:
-                    # Also ensure the start_line is actually within the node's body
-                    # or very close to the start
                     if node.lineno <= start_line <= node.end_lineno or dist < 2:
                         best_node = node
                         min_distance = dist
+        
+        if not best_node:
+            print(f"DEBUG: find_function_end_line FAILED for line {start_line}. Nodes found (first 10): {nodes_found[:10]}")
+            # Search if any node contains this line
+            for name, start, end in nodes_found:
+                if start <= start_line <= end:
+                    print(f"DEBUG: Found node {name} containing line {start_line}: {start}-{end}")
+                    return end
         
         if best_node:
             return best_node.end_lineno

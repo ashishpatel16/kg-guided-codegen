@@ -17,6 +17,7 @@ class BugsInPyDockerSandbox:
         image_name: str = "python:3.11-slim",
         bugsinpy_root: str = "datasets/BugsInPy",
         experiments_dir: str = "experiments",
+        keep_alive: bool = False,
     ):
         self.project_name = project_name
         self.bug_id = bug_id
@@ -56,7 +57,7 @@ class BugsInPyDockerSandbox:
             image_name=image_name,
             sandbox_dir=self.container_workspace,
             volumes=volumes,
-            keep_alive=True
+            keep_alive=keep_alive
         )
 
     def __enter__(self):
@@ -155,11 +156,10 @@ class BugsInPyDockerSandbox:
         Returns (0, stdout, stderr) if tests pass, (1, stdout, stderr) if they fail.
         """
         logger.info(f"Running tests for {self.project_name}...")
-        args = ["-w", self.container_project_root]
         if relevant:
-            args.append("-r")
+            args = ["-r", "-w", self.container_project_root]
         else:
-            args.append("-a")
+            args = ["-a", "-w", self.container_project_root]
         
         exit_code, stdout, stderr = self._run_bugsinpy_cmd("bugsinpy-test", args, verbose=verbose)
         

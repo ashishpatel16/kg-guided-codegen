@@ -119,7 +119,7 @@ def run_bugsinpy_case(
         print(msg)
         return TestExecutionResult(success=False, stdout="", stderr=msg)
 
-    cmd = [str(test_cmd), "-w", str(work_dir), "-r" if run_relevant else "-a"]
+    cmd = [str(test_cmd), "-r" if run_relevant else "-a", "-w", str(work_dir)]
 
     print(f"Running command: {cmd}")
 

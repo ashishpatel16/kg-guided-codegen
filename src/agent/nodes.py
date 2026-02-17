@@ -612,14 +612,101 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
 
 def generate_tests(state: DebuggingState) -> Dict[str, Any]:
     """
-    Placeholder for generating new test cases to improve fault localization.
-    Currently just prints a message and does nothing.
+    Discovers all test files in the workspace, runs them through the dynamic tracer,
+    and calculates initial coverage and suspiciousness.
     """
-    logger.info("generate_tests: Printing placeholder message. No tests generated yet.")
-    print("\n" + "="*50)
-    print("DEBUG: generate_tests node reached. Skipping generation for now.")
-    print("="*50 + "\n")
-    return {}
+    logger.info("generate_tests: start")
+    host_workspace = state.get("host_workspace")
+    container_workspace = state.get("container_workspace")
+    container_id = state.get("container_id")
+    use_docker = state.get("use_docker", False)
+    
+    if not host_workspace:
+        raise ValueError("host_workspace is required for generate_tests")
+
+    # 1. Enlist all tests (Search for test_*.py files)
+    test_files = []
+    for root, _, files in os.walk(host_workspace):
+        for file in files:
+            if file.startswith("test_") and file.endswith(".py"):
+                test_files.append(os.path.join(root, file))
+    
+    logger.info(f"Found {len(test_files)} test files.")
+    
+    # 2. Calculate Coverage (Run dynamic tracer)
+    # We'll use the dynamic tracer to get a rich CallGraph with suspiciousness
+    if use_docker and container_id:
+        # Map host paths to container paths
+        container_test_files = [
+            tf.replace(host_workspace, container_workspace) for tf in test_files
+        ]
+        
+        # Use the dynamic tracer module
+        debugger_module = "src.program_analysis.dynamic_call_graph"
+        output_path = f"{container_workspace}/all_tests_call_graph.json"
+        
+        # Construct the command
+        # Note: We assume the environment is already setup (venv, etc.) as per previous steps
+        # We limit the number of scripts to avoid huge commands, or we run them all if reasonable
+        scripts_str = " ".join(container_test_files)
+        
+        # If there are too many tests, we might want to prioritize or batch. 
+        # For now, let's try all of them.
+        run_cmd = (
+            f"export PYTHONPATH=$PYTHONPATH:/home/debugger:{container_workspace} && "
+            f"if [ -f env/bin/python ]; then env/bin/python -m {debugger_module} --repo {container_workspace} --scripts {scripts_str} --output {output_path} --test-mode; "
+            f"else python3 -m {debugger_module} --repo {container_workspace} --scripts {scripts_str} --output {output_path} --test-mode; fi"
+        )
+        
+        logger.info(f"Running dynamic tracer on all tests in Docker...")
+        result_raw = run_command(run_cmd, container_id=container_id, workdir=container_workspace)
+        
+        if "Exit Code: 0" not in result_raw:
+            logger.error(f"Dynamic tracing failed: {result_raw}")
+            # Fallback or error? Let's return what we have
+            return {"tests": [os.path.basename(tf) for tf in test_files]}
+            
+        # Retrieval of the result JSON
+        # For now, we'll read it back via run_command cat (hacky but works without more tools)
+        read_cmd = f"cat {output_path}"
+        cg_json_raw = run_command(read_cmd, container_id=container_id, workdir=container_workspace)
+        
+        try:
+            # Extract JSON from STDOUT (it will be after "STDOUT:\n")
+            json_start = cg_json_raw.find("{")
+            json_end = cg_json_raw.rfind("}") + 1
+            if json_start != -1 and json_end != -1:
+                cg_data = json.loads(cg_json_raw[json_start:json_end])
+                
+                # Normalize paths back to host for consistency
+                for node in cg_data.get("nodes", []):
+                    if node.get("file", "").startswith(container_workspace):
+                        node["file"] = node["file"].replace(container_workspace, host_workspace)
+                
+                # Extract coverage matrix (which tests cover which nodes)
+                # In our tracer, this isn't explicitly in the JSON yet in a friendly way,
+                # but we can infer it or update the tracer later.
+                # For now, let's just update the call_graph in the state.
+                
+                return {
+                    "call_graph": cg_data,
+                    "tests": [os.path.basename(tf) for tf in test_files],
+                    "history": [{
+                        "node": "generate_tests",
+                        "timestamp": time.time(),
+                        "data": {"test_count": len(test_files), "status": "success"}
+                    }]
+                }
+        except Exception as e:
+            logger.error(f"Error parsing call graph JSON: {e}")
+            
+    else:
+        # Local execution (not fully implemented in this flow, but placeholder)
+        logger.warning("Local execution of generate_tests not fully implemented.")
+    
+    return {
+        "tests": [os.path.basename(tf) for tf in test_files],
+    }
 
 
 def generate_patch(state: DebuggingState) -> Dict[str, Any]:
@@ -660,7 +747,8 @@ def generate_patch(state: DebuggingState) -> Dict[str, Any]:
     }
     
     diff = generate_diff(source_code, patch, filename=node.get("file", "source.py"))
-
+    
+    save_history(state.get("history", []) + [history_entry])
     return {
         "final_patch": patch,
         "final_diff": diff,
