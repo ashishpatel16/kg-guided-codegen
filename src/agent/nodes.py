@@ -25,6 +25,7 @@ from src.agent.tools import (
     build_inspection_patch_prompt,
     generate_diff,
 )
+from src.program_analysis.suspiciousness_controller import SuspiciousnessController
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -280,8 +281,16 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     if not call_graph or "nodes" not in call_graph:
         return {"call_graph": call_graph}
 
-    # 1. Collect raw scores with a small floor to ensure coverage
+    # Extract execution data for SuspiciousnessController
+    # Note: call_graph here is likely the dict representation of the model
+    # We need to reconstruction the execution map if not directly present in state
+    
+    # Check if we have the needed data in the call_graph artifact or state
+    # (Assuming the tracer already populated suspiciousness, but we want to refine it)
+    
     nodes = call_graph["nodes"]
+    
+    # 1. Collect raw scores with a small floor to ensure coverage
     raw_scores = []
     for node in nodes:
         # Use suspiciousness as the basis, with a small floor
@@ -299,6 +308,7 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
         for node in nodes:
             node["confidence_score"] = uniform_score
     
+    # 3. Log Ambiguity Groups
     logger.info(f"Initialized and normalized confidence scores for {len(nodes)} nodes.")
 
     # Print the confidence score for top 10 nodes along with their suspiciousness
@@ -320,12 +330,24 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     if not nodes:
         raise ValueError("No nodes in call graph")
 
+    # Reconstruct execution map for SuspiciousnessController if coverage_matrix exists
+    coverage_matrix = state.get("coverage_matrix", {})
+    controller = None
+    if coverage_matrix:
+        # Invert coverage_matrix (Node -> [Tests]) to node_execution_map (Test -> {Nodes})
+        node_execution_map: Dict[str, Set[str]] = {}
+        for node_fqn, tests in coverage_matrix.items():
+            for t in tests:
+                if t not in node_execution_map:
+                    node_execution_map[t] = set()
+                node_execution_map[t].add(node_fqn)
+        
+        controller = SuspiciousnessController(node_execution_map, {})
+
     # Only consider nodes that have code (file, start_line) and exclude obscure FQNs
-    # (e.g. demo.filter_primes.<locals>.<listcomp>, <lambda>, <genexpr>)
     def _is_inspectable_fqn(fqn: str) -> bool:
         if not fqn:
             return False
-        # Exclude compiler-generated / obscure names: <listcomp>, <lambda>, <genexpr>, etc.
         return ".<" not in fqn and not fqn.strip().startswith("<")
 
     valid_nodes = [
@@ -343,6 +365,12 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     current_score = target.get("confidence_score", 0.0)
     logger.info(f"Selected target node: {target['fqn']} (confidence_score: {current_score:.4f})")
 
+    if controller:
+        group = controller.get_ambiguity_group_for_node(target["fqn"])
+        if len(group) > 1:
+            logger.info(f"Target node is part of an AMBIGUITY GROUP of size {len(group)}")
+            logger.info(f"Ambiguous nodes: {list(group)[:5]}...")
+    
     history_entry = {
         "node": "select_target_node",
         "timestamp": time.time(),
@@ -350,7 +378,8 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
             "selected_target": target["fqn"],
             "score": current_score,
             "suspiciousness": target["suspiciousness"],
-            "file": target["file"]
+            "file": target["file"],
+            "ambiguity_group_size": len(group) if controller else 1
         }
     }
 
@@ -501,7 +530,6 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
         raise ValueError(f"Node {target_fqn} not found")
 
     # 1. LLM Reflection (Quantitative Guidance)
-    # We run this FIRST so the qualitative decision can guide the Bayesian likelihoods.
     source_code = get_function_source(node)
     prompt = build_debugging_reflection_prompt(
         target_fqn, source_code, patch, execution_result
@@ -645,13 +673,8 @@ def generate_tests(state: DebuggingState) -> Dict[str, Any]:
         debugger_module = "src.program_analysis.dynamic_call_graph"
         output_path = f"{container_workspace}/all_tests_call_graph.json"
         
-        # Construct the command
-        # Note: We assume the environment is already setup (venv, etc.) as per previous steps
-        # We limit the number of scripts to avoid huge commands, or we run them all if reasonable
         scripts_str = " ".join(container_test_files)
-        
-        # If there are too many tests, we might want to prioritize or batch. 
-        # For now, let's try all of them.
+
         run_cmd = (
             f"export PYTHONPATH=$PYTHONPATH:/home/debugger:{container_workspace} && "
             f"if [ -f env/bin/python ]; then env/bin/python -m {debugger_module} --repo {container_workspace} --scripts {scripts_str} --output {output_path} --test-mode; "
@@ -667,7 +690,6 @@ def generate_tests(state: DebuggingState) -> Dict[str, Any]:
             return {"tests": [os.path.basename(tf) for tf in test_files]}
             
         # Retrieval of the result JSON
-        # For now, we'll read it back via run_command cat (hacky but works without more tools)
         read_cmd = f"cat {output_path}"
         cg_json_raw = run_command(read_cmd, container_id=container_id, workdir=container_workspace)
         
@@ -683,10 +705,27 @@ def generate_tests(state: DebuggingState) -> Dict[str, Any]:
                     if node.get("file", "").startswith(container_workspace):
                         node["file"] = node["file"].replace(container_workspace, host_workspace)
                 
-                # Extract coverage matrix (which tests cover which nodes)
-                # In our tracer, this isn't explicitly in the JSON yet in a friendly way,
-                # but we can infer it or update the tracer later.
-                # For now, let's just update the call_graph in the state.
+                # Print discovered tests and artifacts
+                print("\n" + "="*50)
+                print("DISCOVERED TESTS:")
+                for tf in test_files:
+                    print(f"  - {os.path.basename(tf)}")
+                
+                print("\nARTIFACTS GENERATED:")
+                print(f"  - Call Graph: {len(cg_data.get('nodes', []))} nodes, {len(cg_data.get('edges', []))} edges")
+                print(f"  - Output JSON: {output_path} (Inside Container)")
+                print("="*50 + "\n")
+
+                history_entry = {
+                    "node": "generate_tests",
+                    "timestamp": time.time(),
+                    "data": {
+                        "test_count": len(test_files),
+                        "discovered_tests": [os.path.basename(tf) for tf in test_files],
+                        "node_count": len(cg_data.get("nodes", [])),
+                        "status": "success"
+                    }
+                }
                 
                 return {
                     "call_graph": cg_data,

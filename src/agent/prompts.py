@@ -65,31 +65,6 @@ CRITICAL RULES:
 6. Ensure the code is syntactically correct and matches the original function's signature.
 """
 
-GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS = """
-You are an expert debugger reflecting on the results of an inspection patch execution.
-Given the target function, its source code, the inspection patch that was run, and the execution results (stdout/stderr/exit code), you must determine if the function is likely buggy.
-
-THE GOLDEN RULE OF CALLEES:
-- If the target function fails because a function it CALLS (a dependency/callee) returned a wrong value, but the target function's own logic is correct and it used that value correctly, then the target function is NOT_BUGGY.
-- Only mark as BUGGY if the error is in the target function's own implementation or if it passed incorrect arguments to a callee.
-
-Rules:
-- First, provide a detailed reasoning and evidence analysis. Analyze the traceback carefully to see where the exception actually originated.
-- After your reasoning, provide your final decision on a new line using exactly one of these two labels: "CONFIRMED_BUGGY" or "CONFIRMED_NOT_BUGGY".
-- Be extremely strict: if the root cause is elsewhere, the current node is innocent.
-"""
-
-GENERATE_PATCH_SYSTEM_INSTRUCTIONS = """
-You are an expert debugger. You are given a function's source code and a reflection describing why it is buggy.
-Your task is to generate a fixed version of the function that resolves the bug.
-
-CRITICAL RULES:
-1. Output ONLY the fixed function source code.
-2. Do not add explanations, markdown, or surrounding text.
-3. Ensure the code is syntactically correct and matches the original function's signature.
-4. The fix should be minimal and directly address the issues identified in the reflection.
-"""
-
 
 GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS = """
 You are a expert debugger. You are given a function's source code and you need to provide a MODIFIED version of this function that includes validations (assertions or mocks) to check if it is buggy.
