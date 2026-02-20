@@ -16,18 +16,25 @@ The key insight is to combine **formal program analysis** (call graphs, coverage
 
 ### 2.1 High-Level Flow
 
-```
-START → initialize_debugging_scores → select_target_node → generate_inspection_patch
-                                                                    ↓
-                                    ←────────────────── execute_inspection
-                                                                    ↓
-                                    update_suspiciousness_and_reflect
-                                                                    ↓
-                                    [if any confidence_score >= 0.9] → END
-                                    [else] → select_target_node (loop)
+```mermaid
+flowchart TD
+    A([START]) --> B[initialize_debugging_scores]
+    B --> C[generate_tests]
+    C --> D{need_more_tests?}
+    D -- Yes --> C
+    D -- No --> E[select_target_node]
+    E --> F[generate_inspection_patch]
+    F --> G[execute_inspection]
+    G --> H[update_suspiciousness_and_reflect]
+    H --> I{confidence_score >= 0.9?}
+    I -- No --> E
+    I -- Yes --> J[generate_patch]
+    J --> K{has_no_regressions?}
+    K -- Yes --> L([END])
+    K -- No --> C
 ```
 
-The agent repeatedly selects the most suspicious node, generates an inspection patch (assertions/validations), runs tests, and updates confidence scores via a Bayesian update. It terminates when some node's `confidence_score` exceeds `CONFIDENCE_THRESHOLD` (0.9).
+The agent first discovers tests and computes initial coverage via dynamic tracing. It then repeatedly selects the most suspicious node, generates an inspection patch (assertions/validations), runs tests, and updates confidence scores via a Bayesian update. When some node's `confidence_score` exceeds `CONFIDENCE_THRESHOLD` (0.9), it generates a fix patch. If the patch introduces regressions, the agent loops back to test generation.
 
 ### 2.2 Input Requirements
 
@@ -173,7 +180,30 @@ Among valid nodes, the agent selects the one with the **maximum `confidence_scor
 
 ### 6.1 State
 
-- **DebuggingState**: `call_graph`, `target_node`, `inspection_patch`, `original_source`, `execution_result`, `reflection`, `history`, `llm_calls`, and optional Docker-related fields.
+**DebuggingState** fields:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `call_graph` | `dict` | Nodes, edges, suspiciousness and confidence scores |
+| `target_node` | `str` | FQN of the node currently under investigation |
+| `inspection_patch` | `str` | Modified function source with injected assertions |
+| `inspection_diff` | `str` | Unified diff of the inspection patch |
+| `original_source` | `str` | Original function source (for rollback) |
+| `execution_result` | `str` | stdout/stderr/exit code from test execution |
+| `reflection` | `str` | LLM reflection on whether the target is buggy |
+| `final_patch` | `str` | The bug-fix source code |
+| `final_diff` | `str` | Unified diff of the fix |
+| `score_delta` | `float` | Configuration for score adjustment |
+| `test_command` | `str` | Fallback test command |
+| `tests` | `list[str]` | Discovered test file paths |
+| `coverage_matrix` | `dict[str, list[str]]` | Node FQN → test FQNs that cover it |
+| `container_id` | `str` | Docker container ID |
+| `container_workspace` | `str` | Path inside container |
+| `host_workspace` | `str` | Path on host |
+| `use_docker` | `bool` | Whether execution runs in Docker |
+| `history` | `list[dict]` | Append-only event log |
+| `messages` | `list[AnyMessage]` | LangChain message history |
+| `llm_calls` | `int` | Total LLM invocations |
 
 ### 6.2 History and Reversibility
 
