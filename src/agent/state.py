@@ -3,50 +3,6 @@ from langchain.messages import AnyMessage
 from typing_extensions import TypedDict, Annotated
 import operator
 
-
-class Confidence(TypedDict):
-    score: float
-    reasoning: str
-
-
-class Evidence(TypedDict):
-    description: str
-    reasoning: str
-    source_node: str
-
-
-class Hypothesis(TypedDict):
-    hypothesis: str
-    evidence: Evidence = None
-    confidence: Confidence = None
-
-
-class MessagesState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add]
-    llm_calls: int
-
-
-class OneShotCodeGenState(TypedDict, total=False):
-    # Input
-    problem: str
-
-    # Output
-    generated_code: str
-
-    # Intermediates
-    hypothesis: str
-    evidence: str
-    evidence_evaluation: float
-    reflection: str
-
-    # Event logging
-    history: Annotated[list[dict], operator.add]
-
-    # Optional bookkeeping
-    messages: Annotated[list[AnyMessage], operator.add]
-    llm_calls: int
-
-
 class DebuggingState(TypedDict, total=False):
     # The call graph data (nodes, edges, suspiciousness scores)
     call_graph: dict
@@ -75,7 +31,7 @@ class DebuggingState(TypedDict, total=False):
     score_delta: float
     test_command: str
 
-    # Discovered tests and coverage (Innovation: Fault Localization baseline)
+    # Discovered tests and coverage 
     tests: list[str]  # List of test function FQNs or file paths
     coverage_matrix: dict[str, list[str]]  # Node FQN -> List of Test FQNs that cover it
     

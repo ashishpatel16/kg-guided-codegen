@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime
 
-from src.agent.graph import debugging_agent, one_shot_codegen_agent, CONFIDENCE_THRESHOLD
+from src.agent.graph import debugging_agent, CONFIDENCE_THRESHOLD
 from src.agent.tools import configure_logging
 from src.program_analysis.dynamic_call_graph import run_dynamic_tracer_in_docker
 from src.program_analysis.models import RepoDefinition, DockerTracerConfig
@@ -11,16 +11,6 @@ from src.program_analysis.models import RepoDefinition, DockerTracerConfig
 logger = logging.getLogger(__name__)
 
 configure_logging(level="INFO")
-
-
-def run_one_shot_demo():
-    print(one_shot_codegen_agent.get_graph().draw_ascii())
-    problem_statement = "Write a program that finds the minimum time required to deliver packages to a set of target cities and reach a final destination, given a limited battery range and specific time windows for delivery."
-
-    result = one_shot_codegen_agent.invoke({"problem": problem_statement})
-
-    print("=== GENERATED CODE ===")
-    print(result["generated_code"])
 
 
 def run_debugging_demo():
