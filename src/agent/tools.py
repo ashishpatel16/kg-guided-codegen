@@ -16,11 +16,6 @@ from src.llm.connector import (
 )
 
 from src.agent.prompts import (
-    DEFAULT_SYSTEM_INSTRUCTIONS,
-    GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS,
-    GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
-    EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS,
-    GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS,
     GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS,
     GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS,
     GENERATE_PATCH_SYSTEM_INSTRUCTIONS,
@@ -88,32 +83,6 @@ def configure_logging(level: str | None = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-
-def build_one_shot_prompt(problem: str) -> str:
-    problem = (problem or "").strip()
-    prompt = f"""{DEFAULT_SYSTEM_INSTRUCTIONS}
-
-    Problem:
-    {problem}
-
-    """
-    logger.debug(
-        "Built prompt (problem_chars=%s, prompt_chars=%s)", len(problem), len(prompt)
-    )
-    return prompt
-
-
-def build_hypothesis_prompt(problem: str) -> str:
-    problem = (problem or "").strip()
-    prompt = f"""{GENERATE_HYPOTHESIS_SYSTEM_INSTRUCTIONS}
-
-    Problem:
-    {problem}
-
-    """
-    return prompt
-
-
 _FENCED_CODE_RE = re.compile(
     r"```(?:[a-zA-Z0-9_+-]+)?\s*([\s\S]*?)\s*```", re.MULTILINE
 )
@@ -167,70 +136,6 @@ def get_default_llm_connector(
             temperature,
         )
     return llm
-
-
-def build_evidence_prompt(problem: str, hypothesis: str, code: str) -> str:
-    problem = (problem or "").strip()
-    hypothesis = (hypothesis or "").strip()
-    code = (code or "").strip()
-    prompt = f"""{GENERATE_EVIDENCE_SYSTEM_INSTRUCTIONS}
-
-    Problem:
-    {problem}
-
-    Hypothesis:
-    {hypothesis}
-
-    Code:
-    {code}
-
-    """
-    return prompt
-
-
-def build_evidence_evaluation_prompt(
-    problem: str, hypothesis: str, evidence: str, code: str
-) -> str:
-    problem = (problem or "").strip()
-    hypothesis = (hypothesis or "").strip()
-    evidence = (evidence or "").strip()
-    code = (code or "").strip()
-    prompt = f"""{EVALUATE_EVIDENCE_SYSTEM_INSTRUCTIONS}
-
-    Problem:
-    {problem}
-
-    Hypothesis:
-    {hypothesis}
-
-    Code:
-    {code}
-
-    Evidence:
-    {evidence}
-
-    """
-    return prompt
-
-
-def build_reflection_prompt(problem: str, hypothesis: str, code: str) -> str:
-    problem = (problem or "").strip()
-    hypothesis = (hypothesis or "").strip()
-    code = (code or "").strip()
-
-    prompt = f"""{GENERATE_REFLECTION_SYSTEM_INSTRUCTIONS}
-
-    Problem:
-    {problem}
-
-    Hypothesis:
-    {hypothesis}
-
-    Code:
-    {code}
-
-    """
-    return prompt
 
 
 def get_function_source(node: dict) -> str:
@@ -320,7 +225,6 @@ def apply_function_source(node: dict, new_source: str) -> bool:
             logger.warning(f"Could not determine end line for node {node.get('fqn')}")
             return False
 
-        # new_source should be a string of the full function body
         # Ensure it ends with a newline
         if not new_source.endswith("\n"):
             new_source += "\n"

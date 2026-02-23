@@ -26,7 +26,7 @@ graph TD
 ## Technical Components
 
 ### State Management (`state.py`)
-Agents use Pydantic-based state objects (`OneShotCodeGenState`, `DebuggingState`) to persist information across nodes, including:
+Agents use Pydantic-based state objects (`DebuggingState`) to persist information across nodes, including:
 - `messages`: Conversation history.
 - `generated_code`: The current candidate solution.
 - `call_graph`: Dynamic analysis data used for fault localization.
