@@ -8,10 +8,14 @@ from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
 from langgraph.graph import END, START, StateGraph
 
-from prompts import (fix_similarities_prompt, fix_test_smell_prompt,
-                     has_test_smell_router_prompt, write_test_case_prompt)
-from utils.code_processing import RouteTest, sanitize_code_output
-from utils.logging import log_node_execution
+from src.agent.test_generation.prompts import (
+    fix_similarities_prompt,
+    fix_test_smell_prompt,
+    has_test_smell_router_prompt,
+    write_test_case_prompt,
+)
+from src.agent.test_generation.utils.code_processing import RouteTest, sanitize_code_output
+from src.agent.test_generation.utils.logging import log_node_execution
 
 
 class GraphState(TypedDict):

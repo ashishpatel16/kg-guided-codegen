@@ -12,11 +12,14 @@ from langchain_google_genai import (ChatGoogleGenerativeAI,
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from core.langchain_graph import LangChainGraph
-from utils.code_processing import (assemble_test_script, extract_unit_tests,
-                                   sanitize_code_output)
-from utils.logging import log_node_execution
-from utils.metrics import analyze_test_coverage
+from src.agent.test_generation.core.langchain_graph import LangChainGraph
+from src.agent.test_generation.utils.code_processing import (
+    assemble_test_script,
+    extract_unit_tests,
+    sanitize_code_output,
+)
+from src.agent.test_generation.utils.logging import log_node_execution
+from src.agent.test_generation.utils.metrics import analyze_test_coverage
 
 
 class UnitTestGenerator:
