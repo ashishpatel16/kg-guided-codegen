@@ -57,6 +57,10 @@ class CallGraph(BaseModel):
 
     nodes: List[CallGraphNode] = []
     edges: List[CallGraphEdge] = []
+
+    # Optional coverage data for fault localization
+    coverage_matrix: Optional[Dict[str, List[str]]] = None  # NodeFQN -> List of TestFQNs
+    test_results: Optional[Dict[str, bool]] = None         # TestFQN -> Passed
     
     def get_suspicious_nodes(
         self,

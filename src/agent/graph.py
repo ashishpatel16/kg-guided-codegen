@@ -16,6 +16,8 @@ from src.agent.nodes import (
     generate_inspection_patch,
     execute_inspection,
     update_suspiciousness_and_reflect,
+    generate_tests,
+    generate_patch,
 )
 from src.agent.state import OneShotCodeGenState, DebuggingState
 
@@ -71,9 +73,31 @@ def should_continue_debugging(state: DebuggingState) -> bool:
     for node in call_graph["nodes"]:
         score = node.get("confidence_score", 0)
         if score >= threshold:
-            logger.info(f"Target found: {node['fqn']} has confidence_score {score:.3f} >= {threshold}")
+            logger.info(f"Target found: {node['fqn']} has confidence_score {score:.4f} >= {threshold}")
             return True
+    
+    # Log top score for debugging
+    if call_graph and "nodes" in call_graph:
+        top_node = max(call_graph["nodes"], key=lambda x: x.get("confidence_score", 0))
+        logger.info(f"Threshold not reached. Top node: {top_node['fqn']} score: {top_node.get('confidence_score', 0):.4f} (Threshold: {threshold})")
+    
     return False
+    
+
+def should_generate_more_tests(state: DebuggingState) -> bool:
+    """
+    Decision node for generating more tests.
+    Currently always returns False.
+    """
+    return False
+
+
+def has_no_regressions(state: DebuggingState) -> bool:
+    """
+    Decision node for checking if the generated patch introduced regressions.
+    Currently always returns True.
+    """
+    return True
 
 
 def build_debugging_agent():
@@ -86,14 +110,24 @@ def build_debugging_agent():
 
     # Nodes
     builder.add_node("initialize_debugging_scores", initialize_debugging_scores)
+    builder.add_node("generate_tests", generate_tests)
     builder.add_node("select_target_node", select_target_node)
     builder.add_node("generate_inspection_patch", generate_inspection_patch)
     builder.add_node("execute_inspection", execute_inspection)
     builder.add_node("update_suspiciousness_and_reflect", update_suspiciousness_and_reflect)
+    builder.add_node("generate_patch", generate_patch)
 
     # Edges
     builder.add_edge(START, "initialize_debugging_scores")
-    builder.add_edge("initialize_debugging_scores", "select_target_node")
+    builder.add_edge("initialize_debugging_scores", "generate_tests")
+    builder.add_conditional_edges(
+        "generate_tests",
+        should_generate_more_tests,
+        {
+            # True: "generate_tests",
+            False: "select_target_node",
+        },
+    )
     builder.add_edge("select_target_node", "generate_inspection_patch")
     builder.add_edge("generate_inspection_patch", "execute_inspection")
     builder.add_edge("execute_inspection", "update_suspiciousness_and_reflect")
@@ -102,8 +136,17 @@ def build_debugging_agent():
         "update_suspiciousness_and_reflect",
         should_continue_debugging,
         {
-            True: END,
+            True: "generate_patch",
             False: "select_target_node",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "generate_patch",
+        has_no_regressions,
+        {
+            True: END,
+            False: "generate_tests",
         },
     )
 

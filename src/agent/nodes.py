@@ -18,11 +18,14 @@ from src.agent.tools import (
     get_function_source,
     apply_function_source,
     run_command,
-    build_inspection_patch_prompt,
     build_debugging_reflection_prompt,
     find_test_files_for_node,
     save_history,
+    build_patch_prompt,
+    build_inspection_patch_prompt,
+    generate_diff,
 )
+from src.program_analysis.suspiciousness_controller import SuspiciousnessController
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -278,8 +281,16 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     if not call_graph or "nodes" not in call_graph:
         return {"call_graph": call_graph}
 
-    # 1. Collect raw scores with a small floor to ensure coverage
+    # Extract execution data for SuspiciousnessController
+    # Note: call_graph here is likely the dict representation of the model
+    # We need to reconstruction the execution map if not directly present in state
+    
+    # Check if we have the needed data in the call_graph artifact or state
+    # (Assuming the tracer already populated suspiciousness, but we want to refine it)
+    
     nodes = call_graph["nodes"]
+    
+    # 1. Collect raw scores with a small floor to ensure coverage
     raw_scores = []
     for node in nodes:
         # Use suspiciousness as the basis, with a small floor
@@ -297,6 +308,7 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
         for node in nodes:
             node["confidence_score"] = uniform_score
     
+    # 3. Log Ambiguity Groups
     logger.info(f"Initialized and normalized confidence scores for {len(nodes)} nodes.")
 
     # Print the confidence score for top 10 nodes along with their suspiciousness
@@ -318,12 +330,24 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     if not nodes:
         raise ValueError("No nodes in call graph")
 
+    # Reconstruct execution map for SuspiciousnessController if coverage_matrix exists
+    coverage_matrix = state.get("coverage_matrix", {})
+    controller = None
+    if coverage_matrix:
+        # Invert coverage_matrix (Node -> [Tests]) to node_execution_map (Test -> {Nodes})
+        node_execution_map: Dict[str, Set[str]] = {}
+        for node_fqn, tests in coverage_matrix.items():
+            for t in tests:
+                if t not in node_execution_map:
+                    node_execution_map[t] = set()
+                node_execution_map[t].add(node_fqn)
+        
+        controller = SuspiciousnessController(node_execution_map, {})
+
     # Only consider nodes that have code (file, start_line) and exclude obscure FQNs
-    # (e.g. demo.filter_primes.<locals>.<listcomp>, <lambda>, <genexpr>)
     def _is_inspectable_fqn(fqn: str) -> bool:
         if not fqn:
             return False
-        # Exclude compiler-generated / obscure names: <listcomp>, <lambda>, <genexpr>, etc.
         return ".<" not in fqn and not fqn.strip().startswith("<")
 
     valid_nodes = [
@@ -341,6 +365,12 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     current_score = target.get("confidence_score", 0.0)
     logger.info(f"Selected target node: {target['fqn']} (confidence_score: {current_score:.4f})")
 
+    if controller:
+        group = controller.get_ambiguity_group_for_node(target["fqn"])
+        if len(group) > 1:
+            logger.info(f"Target node is part of an AMBIGUITY GROUP of size {len(group)}")
+            logger.info(f"Ambiguous nodes: {list(group)[:5]}...")
+    
     history_entry = {
         "node": "select_target_node",
         "timestamp": time.time(),
@@ -348,7 +378,8 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
             "selected_target": target["fqn"],
             "score": current_score,
             "suspiciousness": target["suspiciousness"],
-            "file": target["file"]
+            "file": target["file"],
+            "ambiguity_group_size": len(group) if controller else 1
         }
     }
 
@@ -393,8 +424,11 @@ def generate_inspection_patch(state: DebuggingState) -> Dict[str, Any]:
         }
     }
 
+    diff = generate_diff(source_code, patch, filename=node.get("file", "source.py"))
+
     return {
         "inspection_patch": patch,
+        "inspection_diff": diff,
         "original_source": source_code,
         "llm_calls": int(state.get("llm_calls") or 0) + 1,
         "history": [history_entry]
@@ -496,7 +530,6 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
         raise ValueError(f"Node {target_fqn} not found")
 
     # 1. LLM Reflection (Quantitative Guidance)
-    # We run this FIRST so the qualitative decision can guide the Bayesian likelihoods.
     source_code = get_function_source(node)
     prompt = build_debugging_reflection_prompt(
         target_fqn, source_code, patch, execution_result
@@ -602,6 +635,164 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
         "reflection": reflection,
         "history": [history_entry],
         "llm_calls": int(state.get("llm_calls") or 0) + 1,
+    }
+
+
+def generate_tests(state: DebuggingState) -> Dict[str, Any]:
+    """
+    Discovers all test files in the workspace, runs them through the dynamic tracer,
+    and calculates initial coverage and suspiciousness.
+    """
+    logger.info("generate_tests: start")
+    host_workspace = state.get("host_workspace")
+    container_workspace = state.get("container_workspace")
+    container_id = state.get("container_id")
+    use_docker = state.get("use_docker", False)
+    
+    if not host_workspace:
+        raise ValueError("host_workspace is required for generate_tests")
+
+    # 1. Enlist all tests (Search for test_*.py files)
+    test_files = []
+    for root, _, files in os.walk(host_workspace):
+        for file in files:
+            if file.startswith("test_") and file.endswith(".py"):
+                test_files.append(os.path.join(root, file))
+    
+    logger.info(f"Found {len(test_files)} test files.")
+    
+    # 2. Calculate Coverage (Run dynamic tracer)
+    # We'll use the dynamic tracer to get a rich CallGraph with suspiciousness
+    if use_docker and container_id:
+        # Map host paths to container paths
+        container_test_files = [
+            tf.replace(host_workspace, container_workspace) for tf in test_files
+        ]
+        
+        # Use the dynamic tracer module
+        debugger_module = "src.program_analysis.dynamic_call_graph"
+        output_path = f"{container_workspace}/all_tests_call_graph.json"
+        
+        scripts_str = " ".join(container_test_files)
+
+        run_cmd = (
+            f"export PYTHONPATH=$PYTHONPATH:/home/debugger:{container_workspace} && "
+            f"if [ -f env/bin/python ]; then env/bin/python -m {debugger_module} --repo {container_workspace} --scripts {scripts_str} --output {output_path} --test-mode; "
+            f"else python3 -m {debugger_module} --repo {container_workspace} --scripts {scripts_str} --output {output_path} --test-mode; fi"
+        )
+        
+        logger.info(f"Running dynamic tracer on all tests in Docker...")
+        result_raw = run_command(run_cmd, container_id=container_id, workdir=container_workspace)
+        
+        if "Exit Code: 0" not in result_raw:
+            logger.error(f"Dynamic tracing failed: {result_raw}")
+            # Fallback or error? Let's return what we have
+            return {"tests": [os.path.basename(tf) for tf in test_files]}
+            
+        # Retrieval of the result JSON
+        read_cmd = f"cat {output_path}"
+        cg_json_raw = run_command(read_cmd, container_id=container_id, workdir=container_workspace)
+        
+        try:
+            # Extract JSON from STDOUT (it will be after "STDOUT:\n")
+            json_start = cg_json_raw.find("{")
+            json_end = cg_json_raw.rfind("}") + 1
+            if json_start != -1 and json_end != -1:
+                cg_data = json.loads(cg_json_raw[json_start:json_end])
+                
+                # Normalize paths back to host for consistency
+                for node in cg_data.get("nodes", []):
+                    if node.get("file", "").startswith(container_workspace):
+                        node["file"] = node["file"].replace(container_workspace, host_workspace)
+                
+                # Print discovered tests and artifacts
+                print("\n" + "="*50)
+                print("DISCOVERED TESTS:")
+                for tf in test_files:
+                    print(f"  - {os.path.basename(tf)}")
+                
+                print("\nARTIFACTS GENERATED:")
+                print(f"  - Call Graph: {len(cg_data.get('nodes', []))} nodes, {len(cg_data.get('edges', []))} edges")
+                print(f"  - Output JSON: {output_path} (Inside Container)")
+                print("="*50 + "\n")
+
+                history_entry = {
+                    "node": "generate_tests",
+                    "timestamp": time.time(),
+                    "data": {
+                        "test_count": len(test_files),
+                        "discovered_tests": [os.path.basename(tf) for tf in test_files],
+                        "node_count": len(cg_data.get("nodes", [])),
+                        "status": "success"
+                    }
+                }
+                
+                return {
+                    "call_graph": cg_data,
+                    "tests": [os.path.basename(tf) for tf in test_files],
+                    "history": [{
+                        "node": "generate_tests",
+                        "timestamp": time.time(),
+                        "data": {"test_count": len(test_files), "status": "success"}
+                    }]
+                }
+        except Exception as e:
+            logger.error(f"Error parsing call graph JSON: {e}")
+            
+    else:
+        # Local execution (not fully implemented in this flow, but placeholder)
+        logger.warning("Local execution of generate_tests not fully implemented.")
+    
+    return {
+        "tests": [os.path.basename(tf) for tf in test_files],
+    }
+
+
+def generate_patch(state: DebuggingState) -> Dict[str, Any]:
+    """
+    Generates a final fix patch for the localized bug based on reflection.
+    """
+    logger.info("generate_patch: Final bug fix phase.")
+    
+    target_fqn = state.get("target_node")
+    call_graph = state.get("call_graph")
+    reflection = state.get("reflection", "")
+    
+    if not target_fqn:
+        raise ValueError("target_node is required for generate_patch")
+        
+    node = next((n for n in call_graph["nodes"] if n["fqn"] == target_fqn), None)
+    if not node:
+        raise ValueError(f"Node {target_fqn} not found in call graph")
+        
+    source_code = get_function_source(node)
+    if not source_code:
+        raise ValueError(f"Could not fetch source code for {target_fqn}")
+        
+    prompt = build_patch_prompt(target_fqn, source_code, reflection)
+    llm = get_default_llm_connector()
+    raw_patch = llm.generate(prompt)
+    patch = extract_code(raw_patch)
+    
+    logger.info(f"generate_patch: done for {target_fqn}")
+    
+    history_entry = {
+        "node": "generate_patch",
+        "timestamp": time.time(),
+        "data": {
+            "target_node": target_fqn,
+            "patch": patch
+        }
+    }
+    
+    diff = generate_diff(source_code, patch, filename=node.get("file", "source.py"))
+    
+    save_history(state.get("history", []) + [history_entry])
+    return {
+        "final_patch": patch,
+        "final_diff": diff,
+        "llm_calls": int(state.get("llm_calls") or 0) + 1,
+        "history": [history_entry]
     }
 
 

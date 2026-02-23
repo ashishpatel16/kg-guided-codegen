@@ -426,6 +426,20 @@ class DynamicCallGraphTracer:
 
         call_graph = CallGraph(static=False, dynamic=True, nodes=nodes, edges=edges)
         
+        # Populate coverage data
+        if self._test_results:
+            call_graph.test_results = self._test_results.copy()
+            
+        if self._node_execution_map:
+            # Invert: Source is Test -> Nodes, Target needed is Node -> Tests
+            inverted: Dict[str, List[str]] = {}
+            for t_fqn, nodes_set in self._node_execution_map.items():
+                for node_fqn in nodes_set:
+                    if node_fqn not in inverted:
+                        inverted[node_fqn] = []
+                    inverted[node_fqn].append(t_fqn)
+            call_graph.coverage_matrix = inverted
+
         # Compute suspiciousness scores if test results are available
         if self._test_results:
             self._logger.info(f"Computing suspiciousness scores for {len(self._test_results)} tests")
