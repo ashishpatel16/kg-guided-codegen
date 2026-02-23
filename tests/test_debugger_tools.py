@@ -5,8 +5,8 @@ from typing import Dict, Any
 # Ensure src is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.agent.nodes import generate_patch
-from src.agent.state import DebuggingState
+from src.agent.fault_localization.nodes import generate_patch
+from src.agent.fault_localization.state import DebuggingState
 
 def test_generate_patch_mock():
     mock_call_graph = {

@@ -3,8 +3,8 @@ import logging
 import os
 from datetime import datetime
 
-from src.agent.graph import debugging_agent, CONFIDENCE_THRESHOLD
-from src.agent.tools import configure_logging
+from src.agent.fault_localization.graph import debugging_agent, CONFIDENCE_THRESHOLD
+from src.agent.fault_localization.tools import configure_logging
 from src.benchmarks.setup_bugsinpy_docker import BugsInPyDockerSandbox
 
 logger = logging.getLogger(__name__)

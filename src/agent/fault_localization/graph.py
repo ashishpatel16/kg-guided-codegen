@@ -1,11 +1,11 @@
 from __future__ import annotations
-from src.agent.state import DebuggingState
+from src.agent.fault_localization.state import DebuggingState
 
 import logging
 
 from langgraph.graph import END, START, StateGraph
 
-from src.agent.nodes import (
+from src.agent.fault_localization.nodes import (
     initialize_debugging_scores,
     select_target_node,
     generate_inspection_patch,
@@ -14,7 +14,7 @@ from src.agent.nodes import (
     generate_tests,
     generate_patch,
 )
-from src.agent.state import DebuggingState
+from src.agent.fault_localization.state import DebuggingState
 
 logger = logging.getLogger(__name__)
 CONFIDENCE_THRESHOLD = 0.9
@@ -109,6 +109,4 @@ def build_debugging_agent():
     logger.info("Compiled debugging agent graph")
     return compiled
 
-
-one_shot_codegen_agent = build_one_shot_codegen_agent()
 debugging_agent = build_debugging_agent()

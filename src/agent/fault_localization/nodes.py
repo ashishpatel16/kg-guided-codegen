@@ -6,15 +6,10 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.agent.state import DebuggingState
-from src.agent.tools import (
-    build_hypothesis_prompt,
-    build_one_shot_prompt,
+from src.agent.fault_localization.state import DebuggingState
+from src.agent.fault_localization.tools import (
     extract_code,
     get_default_llm_connector,
-    build_evidence_prompt,
-    build_evidence_evaluation_prompt,
-    build_reflection_prompt,
     get_function_source,
     apply_function_source,
     run_command,
