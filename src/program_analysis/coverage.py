@@ -70,54 +70,75 @@ class CoverageAnalyzer:
             "is_static": self.is_static
         }
 
-    def compute_suspiciousness(self, method: str = "tarantula") -> Dict[str, float]:
+    def compute_suspiciousness(self, method: str = "tarantula") -> Dict[str, Dict[str, Any]]:
         """
-        Computes suspiciousness score for each node based on pass/fail test results.
+        Computes suspiciousness score and raw SBFL spectra for each node.
         Currently supports: 'tarantula'
         
-        Tarantula Score = (failed(s)/total_failed) / [(passed(s)/total_passed) + (failed(s)/total_failed)]
+        Spectra per node:
+            ef = number of failing tests that execute this node
+            ep = number of passing tests that execute this node
+            nf = number of failing tests that do NOT execute this node
+            np = number of passing tests that do NOT execute this node
+        
+        Tarantula Score = (ef/total_failed) / [(ep/total_passed) + (ef/total_failed)]
+        
+        Returns:
+            Dict mapping node FQN -> {"score": float, "ef": int, "ep": int, "nf": int, "np": int}
         """
         if not self.test_results:
             return {}
 
-        total_failed = sum(1 for passed in self.test_results.values() if not passed)
-        total_passed = sum(1 for passed in self.test_results.values() if passed)
+        total_failed: int = sum(1 for passed in self.test_results.values() if not passed)
+        total_passed: int = sum(1 for passed in self.test_results.values() if passed)
 
         if total_failed == 0:
-            # If no tests failed, nothing is "suspicious" in the fault localization sense
-            return {node: 0.0 for node in self.graph.nodes()}
+            return {
+                node: {"score": 0.0, "ef": 0, "ep": 0, "nf": 0, "np": total_passed}
+                for node in self.graph.nodes()
+            }
 
-        suspiciousness = {}
+        results: Dict[str, Dict[str, Any]] = {}
         
-        # Count passes/fails per node
-        node_stats = {node: {"passed": 0, "failed": 0} for node in self.graph.nodes()}
+        # Count passes/fails per node (ef and ep)
+        node_stats: Dict[str, Dict[str, int]] = {
+            node: {"ef": 0, "ep": 0} for node in self.graph.nodes()
+        }
         
         for test_fqn, executed_nodes in self.node_execution_map.items():
-            passed = self.test_results.get(test_fqn, False)
+            passed: bool = self.test_results.get(test_fqn, False)
             for node in executed_nodes:
                 if node in node_stats:
                     if passed:
-                        node_stats[node]["passed"] += 1
+                        node_stats[node]["ep"] += 1
                     else:
-                        node_stats[node]["failed"] += 1
+                        node_stats[node]["ef"] += 1
 
         for node, stats in node_stats.items():
-            failed_s = stats["failed"]
-            passed_s = stats["passed"]
+            ef: int = stats["ef"]
+            ep: int = stats["ep"]
+            nf: int = total_failed - ef
+            np_val: int = total_passed - ep
             
             # Tarantula formula
-            failed_ratio = failed_s / total_failed
-            passed_ratio = (passed_s / total_passed) if total_passed > 0 else 0
+            failed_ratio: float = ef / total_failed
+            passed_ratio: float = (ep / total_passed) if total_passed > 0 else 0.0
             
-            denominator = passed_ratio + failed_ratio
+            denominator: float = passed_ratio + failed_ratio
             if denominator == 0:
-                score = 0.0
+                score: float = 0.0
             else:
                 score = failed_ratio / denominator
             
-            suspiciousness[node] = round(score, 4)
+            results[node] = {
+                "score": round(score, 4),
+                "ef": ef,
+                "ep": ep,
+                "nf": nf,
+                "np": np_val,
+            }
 
-        return suspiciousness
+        return results
 
     def get_test_dependency_map(self) -> Dict[str, List[str]]:
         """
@@ -194,9 +215,9 @@ if __name__ == "__main__":
     scores = analyzer.compute_suspiciousness(method="tarantula")
     
     print("Tarantula Suspiciousness Scores:")
-    for node, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
-        if score > 0:
-            print(f"  {node}: {score}")
+    for node, result in sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True):
+        if result["score"] > 0:
+            print(f"  {node}: score={result['score']} ef={result['ef']} ep={result['ep']} nf={result['nf']} np={result['np']}")
 
     
     

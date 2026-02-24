@@ -94,12 +94,17 @@ def compute_suspiciousness_scores(
         executed_nodes = node_execution_map.get(test_fqn, set())
         analyzer.add_dynamic_test_result(test_fqn, passed, executed_nodes)
     
-    # Compute Tarantula scores
-    suspiciousness_scores = analyzer.compute_suspiciousness(method="tarantula")
+    # Compute Tarantula scores (returns score + spectra per node)
+    suspiciousness_results: Dict[str, Dict[str, Any]] = analyzer.compute_suspiciousness(method="tarantula")
     
-    # Update CallGraph nodes with scores
+    # Update CallGraph nodes with scores and spectra
     for node in call_graph.nodes:
-        node.suspiciousness = suspiciousness_scores.get(node.fqn, 0.0)
+        result: Dict[str, Any] = suspiciousness_results.get(node.fqn, {})
+        node.suspiciousness = result.get("score", 0.0)
+        node.ef = result.get("ef", 0)
+        node.ep = result.get("ep", 0)
+        node.nf = result.get("nf", 0)
+        node.np = result.get("np", 0)
     
     return call_graph
 
@@ -384,11 +389,37 @@ class DynamicCallGraphTracer:
         Exports collected dynamic data into the unified CallGraph model.
         Automatically computes suspiciousness scores if test results are available.
         """
+        # Build reverse lookup: node_fqn -> test_fqn
+        # Test FQNs in _test_results may be short names (e.g. "test_fib") while
+        # node FQNs are fully qualified (e.g. "tests.test_demo.test_fib").
+        _node_fqn_to_test_fqn: Dict[str, str] = {}
+        all_node_fqns: List[str] = list(self._nodes.keys())
+        for test_fqn in self._test_results:
+            # Direct match first
+            if test_fqn in self._nodes:
+                _node_fqn_to_test_fqn[test_fqn] = test_fqn
+            else:
+                # Suffix match: find node FQN ending with .<test_fqn>
+                suffix: str = f".{test_fqn}"
+                for node_fqn in all_node_fqns:
+                    if node_fqn.endswith(suffix) or node_fqn == test_fqn:
+                        _node_fqn_to_test_fqn[node_fqn] = test_fqn
+                        break
+
         nodes: List[CallGraphNode] = []
         for fqn, data in self._nodes.items():
             execution_count = int(data.get("execution_count") or 0)
             total_duration = float(data.get("total_duration") or 0.0)
             avg_duration = (total_duration / execution_count) if execution_count > 0 else 0.0
+
+            # Determine if this node is a test case
+            matched_test_fqn: Optional[str] = _node_fqn_to_test_fqn.get(fqn)
+            is_test: bool = matched_test_fqn is not None
+            nodes_executed: List[str] = (
+                sorted(self._node_execution_map.get(matched_test_fqn, set()))
+                if is_test and matched_test_fqn is not None
+                else []
+            )
 
             nodes.append(
                 CallGraphNode(
@@ -404,7 +435,8 @@ class DynamicCallGraphTracer:
                     avg_duration=float(avg_duration),
                     covered=execution_count > 0,
                     suspiciousness=0.0,
-                    confidence_score=0.0,
+                    is_test=is_test,
+                    nodes_executed=nodes_executed,
                     analysis_type="dynamic",
                 )
             )
