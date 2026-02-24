@@ -118,7 +118,7 @@ def get_default_llm_connector(
     google_api_key = os.environ.get("GEMINI_API_KEY")
 
     if google_api_key:
-        model = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        model = model_name or os.environ.get("GEMINI_MODEL", "gemini-3-pro-preview")
         llm = GeminiLLMConnector(
             model_name=model, temperature=temperature, api_key=google_api_key
         )

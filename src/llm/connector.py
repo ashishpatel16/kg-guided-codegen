@@ -46,7 +46,7 @@ class GeminiLLMConnector:
 
     def __init__(
         self,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-3-pro-preview",
         temperature: float = 0.0,
         api_key: Optional[str] = None,
         **kwargs,
