@@ -22,7 +22,7 @@ def run_debugging_demo():
     
     # Use the demo repository for tracing
     demo_repo = os.path.abspath("src/benchmarks/exp/demo")
-    demo_scripts = ["test_demo.py"]
+    demo_scripts = ["tests/test_demo.py"]
     
     repo_def = RepoDefinition(
         repo_path=demo_repo, 
@@ -55,7 +55,7 @@ def run_debugging_demo():
     initial_state = {
         "call_graph": call_graph,
         "score_delta": 0.3,
-        "test_command": "pytest test_demo.py",  # Updated to match the traced repo
+        "test_command": "pytest tests/test_demo.py",  # Updated to match the traced repo
         "llm_calls": 0,
         "host_workspace": demo_repo,
     }
@@ -118,7 +118,7 @@ def run_debugging_demo_disambiguated():
     
     # Use the demo repository for tracing
     demo_repo = os.path.abspath("src/benchmarks/exp/demo")
-    demo_scripts = ["test_demo.py"]
+    demo_scripts = ["tests/test_demo.py"]
     
     repo_def = RepoDefinition(
         repo_path=demo_repo, 
@@ -150,7 +150,7 @@ def run_debugging_demo_disambiguated():
     initial_state = {
         "call_graph": call_graph_data,
         "score_delta": 0.3,
-        "test_command": "pytest test_demo.py",
+        "test_command": "pytest tests/test_demo.py",
         "llm_calls": 0,
         "host_workspace": demo_repo,
         # Populate coverage data for SuspiciousnessController
