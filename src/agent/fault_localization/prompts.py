@@ -56,14 +56,15 @@ Before making your final decision, you must evaluate the execution results again
 * [ ] **Criterion A (Internal Logic Failure):** Does the traceback or assertion error originate from flawed logic strictly within the target function's own body?
 * [ ] **Criterion B (Bad Arguments to Callee):** Did the target function pass incorrect or malformed arguments to a dependency/callee?
 * [ ] **Criterion C (Innocent Caller / Faulty Callee):** Did the target function fail SOLELY because a dependency/callee returned an incorrect value, while the target function's own logic and usage of that value were correct?
+* [ ] **Criterion D (Insufficient Evidence):** Is the evidence ambiguous, contradictory, or insufficient to confidently determine whether the bug originates in this function?
 
-*Decision Logic:* If Criterion A or B is TRUE, the target function is BUGGY. If Criterion C is TRUE, the target function is NOT_BUGGY.
+*Decision Logic:* If Criterion A or B is clearly TRUE, the target function is BUGGY. If Criterion C is clearly TRUE, the target function is NOT_BUGGY. If Criterion D is TRUE or you are not highly confident, the result is INCONCLUSIVE. Only use CONFIRMED_BUGGY or CONFIRMED_NOT_BUGGY when you have strong, unambiguous evidence.
 
 ### Output Formatting Rubric (Mandatory Constraints)
 Your final response must strictly satisfy the following format:
 
-* [ ] **Constraint 1 (Reasoning First):** Does the response begin with a detailed evidence analysis, explicitly tracing the error location in the STDERR/traceback and addressing Criteria A, B, and C?
-* [ ] **Constraint 2 (Strict Labeling):** Is the absolute final line of your response exactly one of these two labels: `CONFIRMED_BUGGY` or `CONFIRMED_NOT_BUGGY`?
+* [ ] **Constraint 1 (Reasoning First):** Does the response begin with a detailed evidence analysis, explicitly tracing the error location in the STDERR/traceback and addressing Criteria A, B, C, and D?
+* [ ] **Constraint 2 (Strict Labeling):** Is the absolute final line of your response exactly one of these three labels: `CONFIRMED_BUGGY`, `CONFIRMED_NOT_BUGGY`, or `INCONCLUSIVE`?
 * [ ] **Constraint 3 (No Extra Text):** Is the final label entirely isolated on a new line without any additional markdown, punctuation, or conversational filler following it?
 
 Output your reasoning and final decision now, ensuring you strictly follow the rubrics above:

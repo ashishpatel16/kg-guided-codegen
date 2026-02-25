@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import re
+import json
 from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -27,6 +28,40 @@ logging.basicConfig(
     format='[%(name)s][%(levelname)s] %(message)s'
 )
 
+def log_confidence_evolution(state: DebuggingState, iteration: int, target_node: str = None, outcome: str = None):
+    workspace = state.get("host_workspace", os.getcwd())
+    log_file = os.path.join(workspace, "confidence_evolution.json")
+    call_graph = state.get("call_graph", {})
+    scores_snapshot = {
+        n.get("fqn", "unknown"): n.get("confidence_score", 0.0) 
+        for n in call_graph.get("nodes", [])
+        if "fqn" in n
+    }
+    
+    evolution_entry = {
+        "iteration": iteration,
+        "target_node": target_node,
+        "outcome": outcome,
+        "scores": scores_snapshot
+    }
+    
+    try:
+        evolution_data = []
+        if iteration > 0 and os.path.exists(log_file):
+            with open(log_file, "r") as f:
+                try:
+                    evolution_data = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        evolution_data.append(evolution_entry)
+        
+        with open(log_file, "w") as f:
+            json.dump(evolution_data, f, indent=2)
+        logger.info(f"Iteration {iteration} and dumped to {log_file}")
+    except Exception as e:
+        logger.error(f"Failed to log confidence evolution: {e}")
+
 
 # TODO: Test the distribution thoroughly
 def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
@@ -42,12 +77,16 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     
     nodes = call_graph["nodes"]
     
-    # 1. Collect raw scores with a small floor to ensure coverage
-    raw_scores = []
+    # 1. Two-tier priors: suspicious nodes get their suspiciousness value,
+    # non-suspicious nodes get a tiny epsilon so Bayes can still update them
+    EPSILON: float = 1e-6
+    raw_scores: List[float] = []
     for node in nodes:
-        # Use suspiciousness as the basis, with a small floor
-        raw_score = max(0.01, node.get("suspiciousness", 0.0))
-        raw_scores.append(raw_score)
+        suspiciousness: float = node.get("suspiciousness", 0.0)
+        if suspiciousness > 0.0:
+            raw_scores.append(suspiciousness)
+        else:
+            raw_scores.append(EPSILON)
 
     # 2. Normalize so that sum(scores) == 1.0
     total_score = sum(raw_scores)
@@ -66,6 +105,7 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     for node in sorted(nodes, key=lambda x: x.get("confidence_score", 0.0), reverse=True)[:10]:
         print(f"{node['fqn']}: confidence_score={node.get('confidence_score', 0.0):.4f}, suspiciousness={node.get('suspiciousness', 0.0):.4f}")
     print("*"*100, "\n\n")
+    log_confidence_evolution(state, iteration=0, target_node=None, outcome="INITIALIZATION")
     return {"call_graph": call_graph}
 
 
@@ -265,10 +305,12 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
     llm = get_default_llm_connector()
     reflection = llm.generate(prompt)
     
-    # Check for decision (case-insensitive search in the last few lines)
-    last_lines = reflection.strip().splitlines()[-3:]
-    is_llm_buggy = any("CONFIRMED_BUGGY" in line for line in last_lines)
-    is_llm_not_buggy = any("CONFIRMED_NOT_BUGGY" in line for line in last_lines)
+    # Check for decision in the last few lines.
+    # Check NOT_BUGGY first to avoid substring match (CONFIRMED_NOT_BUGGY contains CONFIRMED_BUGGY).
+    last_lines: List[str] = reflection.strip().splitlines()[-3:]
+    is_llm_not_buggy: bool = any("CONFIRMED_NOT_BUGGY" in line for line in last_lines)
+    is_llm_buggy: bool = any("CONFIRMED_BUGGY" in line for line in last_lines) and not is_llm_not_buggy
+    is_llm_inconclusive: bool = any("INCONCLUSIVE" in line for line in last_lines)
 
     # 2. Detect Formal Signals
     heartbeat_msg = f"--- INSPECTION_START: {target_fqn} ---"
@@ -283,58 +325,56 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
 
     is_failure = "Exit Code: 0" not in execution_result
 
-    # 3. Likelihoods P(E|Buggy) and P(E|NotBuggy)
-    prior = node.get("confidence_score", 0.5)
+    # 3. Multi-Hypothesis Bayesian Update
+    prior: float = node.get("confidence_score", 0.5)
 
-    if has_target_assertion:
-        # Case A: Formal proof of failure in target
-        if is_llm_not_buggy:
-            p_e_given_buggy = 0.60
-            p_e_given_not_buggy = 0.40
-            outcome = "TARGET_ASSERTION_FAILED_BUT_LLM_DISAGREES"
-        else:
-            p_e_given_buggy = 0.95
-            p_e_given_not_buggy = 0.05
-            outcome = "TARGET_ASSERTION_FAILED"
+    if is_llm_buggy:
+        # LLM oracle says target is BUGGY
+        p_e_given_target: float = 0.95  # P(E | target is the bug)
+        p_e_given_other: float = 0.10   # P(E | some other node is the bug)
+        outcome = "LLM_CONFIRMED_BUGGY"
+    elif is_llm_not_buggy:
+        # LLM oracle says target is NOT BUGGY
+        p_e_given_target = 0.05   # P(E | target is the bug) — false negative
+        p_e_given_other = 0.90    # P(E | other node is the bug) — expected result
+        outcome = "LLM_CONFIRMED_NOT_BUGGY"
+    elif is_llm_inconclusive:
+        # LLM says evidence is insufficient — uninformative
+        p_e_given_target = 0.50
+        p_e_given_other = 0.50
+        outcome = "LLM_INCONCLUSIVE"
     elif is_covered and not is_failure:
-        # Case B: Formal proof of success (covered and passed)
-        p_e_given_buggy = 0.10
-        p_e_given_not_buggy = 0.90
+        # No LLM verdict, but formal signal says covered and passed
+        p_e_given_target = 0.10
+        p_e_given_other = 0.90
         outcome = "COVERED_AND_PASSED"
-    elif is_failure and not has_target_assertion:
-        # Case C: Collateral failure (test failed but not obviously here)
-        if is_llm_buggy:
-            p_e_given_buggy = 0.70
-            p_e_given_not_buggy = 0.30
-            outcome = "COLLATERAL_FAILURE_LLM_SUSPICIOUS"
-        elif is_llm_not_buggy:
-            p_e_given_buggy = 0.40
-            p_e_given_not_buggy = 0.60
-            outcome = "COLLATERAL_FAILURE_LLM_INNOCENT"
-        else:
-            p_e_given_buggy = 0.60
-            p_e_given_not_buggy = 0.40
-            outcome = "COLLATERAL_FAILURE"
-    elif not is_covered:
-        # Case D: Uninformative (not covered)
-        p_e_given_buggy = 0.50
-        p_e_given_not_buggy = 0.50
-        outcome = "NO_COVERAGE"
     else:
-        p_e_given_buggy = 0.50
-        p_e_given_not_buggy = 0.50
+        # No useful signal at all
+        p_e_given_target = 0.50
+        p_e_given_other = 0.50
         outcome = "INCONCLUSIVE"
 
-    # 4. Apply Bayes Theorem
-    # P(B|E) = (P(E|B) * P(B)) / (P(E|B) * P(B) + P(E|~B) * P(~B))
-    denominator = (p_e_given_buggy * prior) + (p_e_given_not_buggy * (1 - prior))
-    if denominator == 0:
-        posterior = prior
-    else:
-        posterior = (p_e_given_buggy * prior) / denominator
+    # 4. Apply Multi-Hypothesis Bayes: P(H_i|E) = P(E|H_i) * P(H_i) / P(E)
+    all_nodes: List[Dict[str, Any]] = call_graph["nodes"]
+    unnormalized: List[float] = []
+    for n in all_nodes:
+        prior_i: float = n.get("confidence_score", 0.0)
+        if n["fqn"] == target_fqn:
+            unnormalized.append(p_e_given_target * prior_i)
+        else:
+            unnormalized.append(p_e_given_other * prior_i)
+
+    # P(E) = sum of all unnormalized posteriors
+    p_evidence: float = sum(unnormalized)
+    if p_evidence > 0:
+        for n, score in zip(all_nodes, unnormalized):
+            n["confidence_score"] = max(0.001, min(0.99, score / p_evidence))
     
-    # Clamp and update confidence_score
-    node["confidence_score"] = max(0.01, min(0.99, posterior))
+    # Ensure scores sum to 1.0 after clamping (minor adjustment)
+    total: float = sum(n.get("confidence_score", 0.0) for n in all_nodes)
+    if total > 0:
+        for n in all_nodes:
+            n["confidence_score"] = n["confidence_score"] / total
     
     logger.info(
         f"Bayesian Update for {target_fqn}: outcome={outcome}, "
@@ -357,6 +397,13 @@ def update_suspiciousness_and_reflect(state: DebuggingState) -> Dict[str, Any]:
     
     current_history = state.get("history", []) + [history_entry]
     save_history(current_history)
+
+    log_confidence_evolution(
+        state, 
+        iteration=len(current_history), 
+        target_node=target_fqn, 
+        outcome=outcome
+    )
 
     return {
         "call_graph": call_graph,
