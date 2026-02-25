@@ -60,8 +60,6 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
         for node in nodes:
             node["confidence_score"] = uniform_score
     
-    # 3. Log Ambiguity Groups
-    logger.info(f"Initialized and normalized confidence scores for {len(nodes)} nodes.")
 
     # Print the confidence score for top 10 nodes along with their suspiciousness
     print("*"*100)
@@ -225,10 +223,8 @@ def execute_inspection(state: DebuggingState) -> Dict[str, Any]:
         else:
             result = run_command(test_command)
     finally:
-        pass
-        # 4. Restore original source
-        # logger.info(f"execute_inspection: restoring original source for {target_fqn}")
-        # apply_function_source(node, original_source)
+        logger.info(f"execute_inspection: restoring original source for {target_fqn}")
+        apply_function_source(node, original_source)
 
     history_entry = {
         "node": "execute_inspection",
