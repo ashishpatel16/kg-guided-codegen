@@ -34,6 +34,16 @@ class CallGraphNode(BaseModel):
     covered: bool = False
     suspiciousness: Optional[float] = -1.0
 
+    # SBFL spectra (populated during fault localization)
+    ef: int = 0   # number of failing tests that execute this node
+    ep: int = 0   # number of passing tests that execute this node
+    nf: int = 0   # number of failing tests that do NOT execute this node
+    np: int = 0   # number of passing tests that do NOT execute this node
+
+    # Test case metadata
+    is_test: bool = False  # True if this node is a test case
+    nodes_executed: List[str] = []  # FQNs of nodes traversed by this test (only for test nodes)
+
     analysis_type: Literal["static", "dynamic", "hybrid"] = "static"
 
 

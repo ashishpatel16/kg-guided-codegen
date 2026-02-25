@@ -6,15 +6,10 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.agent.state import DebuggingState
-from src.agent.tools import (
-    build_hypothesis_prompt,
-    build_one_shot_prompt,
+from src.agent.fault_localization.state import DebuggingState
+from src.agent.fault_localization.tools import (
     extract_code,
     get_default_llm_connector,
-    build_evidence_prompt,
-    build_evidence_evaluation_prompt,
-    build_reflection_prompt,
     get_function_source,
     apply_function_source,
     run_command,
@@ -25,7 +20,6 @@ from src.agent.tools import (
     build_inspection_patch_prompt,
     generate_diff,
 )
-from src.program_analysis.suspiciousness_controller import SuspiciousnessController
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -45,13 +39,6 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
     call_graph = state.get("call_graph")
     if not call_graph or "nodes" not in call_graph:
         return {"call_graph": call_graph}
-
-    # Extract execution data for SuspiciousnessController
-    # Note: call_graph here is likely the dict representation of the model
-    # We need to reconstruction the execution map if not directly present in state
-    
-    # Check if we have the needed data in the call_graph artifact or state
-    # (Assuming the tracer already populated suspiciousness, but we want to refine it)
     
     nodes = call_graph["nodes"]
     
@@ -73,8 +60,6 @@ def initialize_debugging_scores(state: DebuggingState) -> Dict[str, Any]:
         for node in nodes:
             node["confidence_score"] = uniform_score
     
-    # 3. Log Ambiguity Groups
-    logger.info(f"Initialized and normalized confidence scores for {len(nodes)} nodes.")
 
     # Print the confidence score for top 10 nodes along with their suspiciousness
     print("*"*100)
@@ -94,20 +79,6 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     nodes = call_graph["nodes"]
     if not nodes:
         raise ValueError("No nodes in call graph")
-
-    # Reconstruct execution map for SuspiciousnessController if coverage_matrix exists
-    coverage_matrix = state.get("coverage_matrix", {})
-    controller = None
-    if coverage_matrix:
-        # Invert coverage_matrix (Node -> [Tests]) to node_execution_map (Test -> {Nodes})
-        node_execution_map: Dict[str, Set[str]] = {}
-        for node_fqn, tests in coverage_matrix.items():
-            for t in tests:
-                if t not in node_execution_map:
-                    node_execution_map[t] = set()
-                node_execution_map[t].add(node_fqn)
-        
-        controller = SuspiciousnessController(node_execution_map, {})
 
     # Only consider nodes that have code (file, start_line) and exclude obscure FQNs
     def _is_inspectable_fqn(fqn: str) -> bool:
@@ -129,12 +100,6 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
     
     current_score = target.get("confidence_score", 0.0)
     logger.info(f"Selected target node: {target['fqn']} (confidence_score: {current_score:.4f})")
-
-    if controller:
-        group = controller.get_ambiguity_group_for_node(target["fqn"])
-        if len(group) > 1:
-            logger.info(f"Target node is part of an AMBIGUITY GROUP of size {len(group)}")
-            logger.info(f"Ambiguous nodes: {list(group)[:5]}...")
     
     history_entry = {
         "node": "select_target_node",
@@ -144,7 +109,6 @@ def select_target_node(state: DebuggingState) -> Dict[str, Any]:
             "score": current_score,
             "suspiciousness": target["suspiciousness"],
             "file": target["file"],
-            "ambiguity_group_size": len(group) if controller else 1
         }
     }
 
@@ -259,7 +223,6 @@ def execute_inspection(state: DebuggingState) -> Dict[str, Any]:
         else:
             result = run_command(test_command)
     finally:
-        # 4. Restore original source
         logger.info(f"execute_inspection: restoring original source for {target_fqn}")
         apply_function_source(node, original_source)
 

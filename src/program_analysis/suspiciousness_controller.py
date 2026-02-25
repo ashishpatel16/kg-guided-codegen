@@ -109,8 +109,8 @@ class SuspiciousnessController:
         if len(group) <= 1:
             return f"# Node {node_fqn} is not ambiguous."
 
-        # Collect source code for all nodes in the group for context
-        from src.agent.tools import get_function_source
+        # Lazy import to avoid circular dependency
+        from src.agent.fault_localization.tools import get_function_source
         
         context_sources = {}
         for member_fqn in group:

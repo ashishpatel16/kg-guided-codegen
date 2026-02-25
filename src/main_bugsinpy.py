@@ -1,114 +1,234 @@
+import argparse
 import json
 import logging
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from src.agent.graph import debugging_agent, CONFIDENCE_THRESHOLD
-from src.agent.tools import configure_logging
+from src.agent.fault_localization.graph import debugging_agent, CONFIDENCE_THRESHOLD
+from src.agent.fault_localization.tools import configure_logging
 from src.benchmarks.setup_bugsinpy_docker import BugsInPyDockerSandbox
 
 logger = logging.getLogger(__name__)
 
-configure_logging(level="INFO")
 
+def run_bugsinpy_debugging(
+    project_name: str,
+    bug_id: str,
+    bugsinpy_root: str = "datasets/BugsInPy",
+    experiments_dir: str = "experiments",
+    artifacts_dir: str = "artifacts",
+    recursion_limit: int = 100,
+) -> Dict[str, Any]:
+    """
+    Full fault-localization pipeline for a single BugsInPy instance.
 
-def run_bugsinpy_debugging(project_name: str, bug_id: str):
-    print(f"=== DEBUGGING AGENT BUGS_IN_PY: {project_name} #{bug_id} ===")
-    
-    # 1. Setup Docker Sandbox
-    # This will checkout the project and provide a running container
-    with BugsInPyDockerSandbox(project_name, bug_id) as bspy:
-        # Checkout buggy version (0)
-        exit_code, out, err = bspy.checkout(version=0)
-        if exit_code != 0:
-            print(f"Error during checkout: {err}")
-            return
+    Steps:
+      1. Start Docker sandbox, checkout buggy version, compile
+      2. Run dynamic tracer → call graph JSON
+      3. Remap container paths → host paths
+      4. Invoke the debugging agent
+      5. Save results to artifacts/
 
-        # Compile project
-        exit_code, out, err = bspy.compile(verbose=True)
-        if exit_code != 0:
-            print(f"Error during compile: {err}")
-            return
+    Args:
+        project_name: BugsInPy project (e.g. "youtube-dl", "black", "keras")
+        bug_id:       Bug number as string (e.g. "1")
+        bugsinpy_root: Path to the BugsInPy dataset root
+        experiments_dir: Working directory for checked-out projects
+        artifacts_dir: Where to write result JSON
+        recursion_limit: Max LangGraph recursion depth
 
-        # 2. Run Dynamic Tracer inside the container
-        output_filename = f"call_graph_{project_name}_{bug_id}.json"
-        print(f"Generating call graph in Docker: {output_filename}...")
-        
-        exit_code, out, err = bspy.run_dynamic_tracer(output_file=output_filename)
-        if exit_code != 0:
-            print(f"Error during tracing: {err}")
-            return
+    Returns:
+        Dict with keys: status, project, bug_id, culprit, top_candidates,
+        final_state (partial), duration_s, error.
+    """
+    timestamp: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result: Dict[str, Any] = {
+        "project": project_name,
+        "bug_id": bug_id,
+        "status": "FAILED",
+        "culprit": None,
+        "top_candidates": [],
+        "error": None,
+        "duration_s": 0.0,
+    }
+    start: datetime = datetime.now()
 
-        # 3. Load the Call Graph
-        host_experiments_dir = bspy.host_experiments_dir
-        
-        
-        call_graph_path = host_experiments_dir / project_name / output_filename
-        if not os.path.exists(call_graph_path):
-            print(f"Error: Call graph file not found at {call_graph_path}")
-            return
+    print(f"\n{'='*60}")
+    print(f"  BugsInPy Fault Localization: {project_name} #{bug_id}")
+    print(f"{'='*60}\n")
 
-        with open(call_graph_path, "r") as f:
-            call_graph = json.load(f)
+    try:
+        with BugsInPyDockerSandbox(
+            project_name,
+            bug_id,
+            bugsinpy_root=bugsinpy_root,
+            experiments_dir=experiments_dir,
+        ) as bspy:
 
-        # 4. Map Container Paths to Host Paths for Agent (to read/edit code)
-        container_project_root = bspy.container_project_root
-        host_project_root = os.path.abspath(host_experiments_dir / project_name)
-        
-        for node in call_graph.get("nodes", []):
-            if node.get("file", "").startswith(container_project_root):
-                node["file"] = node["file"].replace(container_project_root, host_project_root)
-                # Ensure it's absolute
-                node["file"] = os.path.abspath(node["file"])
+            # ── Step 1: Checkout ─────────────────────────────────────────
+            print("[1/5] Checking out buggy version...")
+            exit_code, out, err = bspy.checkout(version=0)
+            if exit_code != 0:
+                result["error"] = f"Checkout failed: {err}"
+                print(f"  ✗ {result['error']}")
+                return result
+            print("  ✓ Checkout complete")
 
-        # 5. Get Test Command from the container
-        # BugsInPy projects have a bugsinpy_run_test.sh script
-        test_command = "bash bugsinpy_run_test.sh"
-        
-        print(f"Using test command: {test_command}")
+            # ── Step 2: Compile ──────────────────────────────────────────
+            print("[2/5] Compiling project...")
+            exit_code, out, err = bspy.compile(verbose=True)
+            if exit_code != 0:
+                result["error"] = f"Compile failed: {err}"
+                print(f"  ✗ {result['error']}")
+                return result
+            print("  ✓ Compile complete")
 
-        # 6. Initialize Agent State
-        initial_state = {
-            "call_graph": call_graph,
-            "score_delta": 0.3,
-            "test_command": test_command,
-            "container_id": bspy.sandbox.container.id,
-            "container_workspace": bspy.container_project_root,
-            "host_workspace": host_project_root,
-            "use_docker": True,
-            "llm_calls": 0,
-        }
+            # ── Step 3: Dynamic tracer ───────────────────────────────────
+            output_filename: str = f"call_graph_{project_name}_{bug_id}.json"
+            print(f"[3/5] Running dynamic tracer → {output_filename}")
+            exit_code, out, err = bspy.run_dynamic_tracer(output_file=output_filename)
+            if exit_code != 0:
+                result["error"] = f"Tracer failed: {err}"
+                print(f"  ✗ {result['error']}")
+                return result
+            print("  ✓ Tracer complete")
 
-        # 7. Run the Agent
-        print("Invoking debugging agent...")
-        final_state = debugging_agent.invoke(initial_state, config={"recursion_limit": 100})
+            # ── Step 4: Load & remap call graph ──────────────────────────
+            print("[4/5] Loading call graph and remapping paths...")
+            call_graph_path: Path = bspy.host_experiments_dir / project_name / output_filename
+            if not call_graph_path.exists():
+                result["error"] = f"Call graph not found at {call_graph_path}"
+                print(f"  ✗ {result['error']}")
+                return result
 
-        print("\n** DEBUGGING COMPLETED **")
-        # Find the node that reached threshold
-        culprit = next(
-            (
-                n
-                for n in final_state["call_graph"]["nodes"]
-                if n.get("confidence_score", 0) >= CONFIDENCE_THRESHOLD
-            ),
-            None,
+            with open(call_graph_path, "r") as f:
+                call_graph: Dict[str, Any] = json.load(f)
+
+            container_root: str = bspy.container_project_root
+            host_root: str = os.path.abspath(bspy.host_experiments_dir / project_name)
+
+            for node in call_graph.get("nodes", []):
+                file_path: str = node.get("file", "")
+                if file_path.startswith(container_root):
+                    node["file"] = os.path.abspath(
+                        file_path.replace(container_root, host_root)
+                    )
+
+            node_count: int = len(call_graph.get("nodes", []))
+            edge_count: int = len(call_graph.get("edges", []))
+            print(f"  ✓ Call graph loaded: {node_count} nodes, {edge_count} edges")
+
+            # ── Step 5: Run the debugging agent ──────────────────────────
+            test_command: str = "bash bugsinpy_run_test.sh"
+            initial_state: Dict[str, Any] = {
+                "call_graph": call_graph,
+                "score_delta": 0.3,
+                "test_command": test_command,
+                "container_id": bspy.sandbox.container.id,
+                "container_workspace": bspy.container_project_root,
+                "host_workspace": host_root,
+                "use_docker": True,
+                "llm_calls": 0,
+            }
+
+            print(f"[5/5] Running fault localization agent (threshold={CONFIDENCE_THRESHOLD})...")
+            final_state: Dict[str, Any] = debugging_agent.invoke(
+                initial_state, config={"recursion_limit": recursion_limit}
+            )
+
+            # ── Results ──────────────────────────────────────────────────
+            nodes: List[Dict[str, Any]] = final_state["call_graph"]["nodes"]
+            sorted_nodes: List[Dict[str, Any]] = sorted(
+                nodes, key=lambda n: n.get("confidence_score", 0), reverse=True
+            )
+
+            culprit: Optional[Dict[str, Any]] = next(
+                (n for n in sorted_nodes if n.get("confidence_score", 0) >= CONFIDENCE_THRESHOLD),
+                None,
+            )
+
+            # Top 5 candidates
+            top_candidates: List[Dict[str, Any]] = [
+                {
+                    "fqn": n["fqn"],
+                    "confidence": round(n.get("confidence_score", 0), 4),
+                    "suspiciousness": round(n.get("suspiciousness", 0), 4),
+                }
+                for n in sorted_nodes[:5]
+            ]
+
+            result["top_candidates"] = top_candidates
+            result["llm_calls"] = final_state.get("llm_calls", 0)
+            result["reflection"] = final_state.get("reflection", "")
+
+            print(f"\n{'='*60}")
+            print("  RESULTS")
+            print(f"{'='*60}")
+
+            if culprit:
+                result["status"] = "LOCALIZED"
+                result["culprit"] = {
+                    "fqn": culprit["fqn"],
+                    "confidence": round(culprit["confidence_score"], 4),
+                }
+                print(f"  ✓ BUGGY NODE: {culprit['fqn']}")
+                print(f"    Confidence: {culprit['confidence_score']:.4f}")
+            else:
+                result["status"] = "INCONCLUSIVE"
+                print(f"  ✗ No node reached threshold {CONFIDENCE_THRESHOLD}")
+
+            print(f"\n  Top 5 candidates:")
+            for i, c in enumerate(top_candidates, 1):
+                marker: str = " ◀" if culprit and c["fqn"] == culprit["fqn"] else ""
+                print(f"    {i}. {c['fqn']}  conf={c['confidence']:.4f}  susp={c['suspiciousness']:.4f}{marker}")
+
+            if final_state.get("reflection"):
+                print(f"\n  Last reflection:")
+                print(f"    {final_state['reflection'][:200]}")
+
+            if final_state.get("final_diff"):
+                result["final_diff"] = final_state["final_diff"]
+                print(f"\n  Generated patch diff (first 500 chars):")
+                print(f"    {final_state['final_diff'][:500]}")
+
+    except Exception as e:
+        result["error"] = str(e)
+        result["status"] = "CRASHED"
+        logger.exception(f"Pipeline crashed: {e}")
+        print(f"\n  ✗ CRASHED: {e}")
+
+    finally:
+        result["duration_s"] = round((datetime.now() - start).total_seconds(), 2)
+        print(f"\n  Duration: {result['duration_s']}s")
+        print(f"{'='*60}\n")
+
+        # Save result JSON
+        os.makedirs(artifacts_dir, exist_ok=True)
+        result_path: str = os.path.join(
+            artifacts_dir, f"bugsinpy_{project_name}_{bug_id}_{timestamp}.json"
         )
+        with open(result_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"  Results saved to {result_path}")
 
-        if culprit:
-            print(f"IDENTIFIED BUGGY NODE: {culprit['fqn']}")
-            print(f"Final Confidence Score: {culprit['confidence_score']:.4f}")
-            print("\nLAST REFLECTION:")
-            print(final_state.get("reflection"))
-        else:
-            top_node = max(final_state["call_graph"]["nodes"], key=lambda x: x.get("confidence_score", 0))
-            print(f"No node reached the {CONFIDENCE_THRESHOLD} confidence threshold.")
-            print(f"Top candidate: {top_node['fqn']} (Confidence: {top_node.get('confidence_score', 0):.4f})")
+    return result
 
 
 if __name__ == "__main__":
-    # Example: youtube-dl bug 1
-    import sys
-    project = sys.argv[1] if len(sys.argv) > 1 else "youtube-dl"
-    bug = sys.argv[2] if len(sys.argv) > 2 else "1"
+    # Specify the project and bug ID here
+    project_name = "tqdm"
+    bug_id = "1"
     
-    run_bugsinpy_debugging(project, bug)
+    configure_logging(level="INFO")
+
+    run_bugsinpy_debugging(
+        project_name=project_name,
+        bug_id=bug_id,
+        bugsinpy_root="datasets/BugsInPy",
+        experiments_dir="experiments",
+        artifacts_dir="artifacts",
+        recursion_limit=100,
+    )

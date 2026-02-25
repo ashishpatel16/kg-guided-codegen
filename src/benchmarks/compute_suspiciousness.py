@@ -12,7 +12,7 @@ if project_root not in sys.path:
 # Import necessary modules
 from src.program_analysis.dynamic_call_graph import trace_repo, compute_suspiciousness_scores, DynamicCallGraphTracer
 from src.program_analysis.suspiciousness_controller import SuspiciousnessController
-from src.agent.tools import get_default_llm_connector, get_function_source
+from src.agent.fault_localization.tools import get_default_llm_connector, get_function_source
 
 # Suppress excessive logging
 logging.getLogger("src.program_analysis.dynamic_call_graph").setLevel(logging.WARNING)

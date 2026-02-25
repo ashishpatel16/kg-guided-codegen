@@ -52,7 +52,7 @@ class UnitTestGenerator:
                 google_api_key=self.cfg["api"]["google_api_key"],
             )
             self.embedding_model = GoogleGenerativeAIEmbeddings(
-                model="models/gemini-embedding-001",
+                model="gemini-embedding-001",
                 google_api_key=self.cfg["api"]["google_api_key"],
             )
         else:

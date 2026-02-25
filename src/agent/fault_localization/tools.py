@@ -15,7 +15,7 @@ from src.llm.connector import (
     GeminiLLMConnector,
 )
 
-from src.agent.prompts import (
+from src.agent.fault_localization.prompts import (
     GENERATE_INSPECTION_PATCH_SYSTEM_INSTRUCTIONS,
     GENERATE_DEBUGGING_REFLECTION_SYSTEM_INSTRUCTIONS,
     GENERATE_PATCH_SYSTEM_INSTRUCTIONS,

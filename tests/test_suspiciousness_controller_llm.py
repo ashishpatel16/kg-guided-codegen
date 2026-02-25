@@ -47,10 +47,9 @@ class TestSuspiciousnessControllerLLM(unittest.TestCase):
         ]}
         
         # Mock get_function_source to avoid file access
-        import src.program_analysis.suspiciousness_controller 
         from unittest.mock import patch
         
-        with patch('src.agent.tools.get_function_source', return_value="def dummy(): pass"):
+        with patch('src.agent.fault_localization.tools.get_function_source', return_value="def dummy(): pass"):
             test_code = self.controller.generate_test_to_disambiguate("node_A", call_graph)
             
         self.assertEqual(test_code, "def test_new(): pass")
