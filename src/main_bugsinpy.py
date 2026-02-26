@@ -1,7 +1,9 @@
 import argparse
+import csv
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -208,7 +210,7 @@ def run_bugsinpy_debugging(
         # Save result JSON
         os.makedirs(artifacts_dir, exist_ok=True)
         result_path: str = os.path.join(
-            artifacts_dir, f"bugsinpy_{project_name}_{bug_id}_{timestamp}.json"
+            artifacts_dir, f"{project_name}_{bug_id}.json"
         )
         with open(result_path, "w") as f:
             json.dump(result, f, indent=2)
@@ -217,18 +219,185 @@ def run_bugsinpy_debugging(
     return result
 
 
+
+def parse_bug_patch(bugsinpy_root: str, project_name: str, bug_id: str) -> Dict[str, Optional[str]]:
+    """
+    Extract ground-truth info from bug_patch.txt.
+
+    Returns a dict with:
+        - file: relative path of the buggy file (from 'diff --git a/<path> b/<path>')
+        - patch: the full raw patch text
+    """
+    info: Dict[str, Optional[str]] = {"file": None, "patch": None}
+    patch_path: Path = Path(bugsinpy_root) / "projects" / project_name / "bugs" / bug_id / "bug_patch.txt"
+    if not patch_path.exists():
+        return info
+    text: str = patch_path.read_text()
+    info["patch"] = text
+
+    # Extract file path: 'diff --git a/<path> b/<path>'
+    file_match: Optional[re.Match] = re.search(r"diff --git a/(.+?) b/", text)
+    if file_match:
+        info["file"] = file_match.group(1)
+
+    return info
+
+
+CSV_COLUMNS: List[str] = [
+    "project",
+    "bug_id",
+    "status",
+    "ground_truth_file",
+    "culprit_fqn",
+    "culprit_confidence",
+    "top1_fqn",
+    "top1_confidence",
+    "top1_suspiciousness",
+    "top5_fqns",
+    "top5_confidences",
+    "llm_calls",
+    "node_count",
+    "edge_count",
+    "recursion_limit",
+    "confidence_threshold",
+    "reflection",
+    "has_patch",
+    "agent_patch",
+    "ground_truth_patch",
+    "duration_s",
+    "error",
+    "timestamp",
+]
+
+
+def append_result_to_csv(
+    csv_path: str,
+    result: Dict[str, Any],
+    ground_truth: Dict[str, Optional[str]],
+    node_count: int,
+    edge_count: int,
+    recursion_limit: int,
+    confidence_threshold: float,
+) -> None:
+    """
+    Append one result row to the CSV file.
+
+    Creates the file with headers on first call.  Uses csv.DictWriter so
+    commas and newlines inside fields (e.g. reflections) are safely escaped.
+    """
+    file_exists: bool = os.path.exists(csv_path)
+
+    top_candidates: List[Dict[str, Any]] = result.get("top_candidates", [])
+    top1: Dict[str, Any] = top_candidates[0] if top_candidates else {}
+
+    culprit: Optional[Dict[str, Any]] = result.get("culprit")
+
+    row: Dict[str, Any] = {
+        "project": result["project"],
+        "bug_id": result["bug_id"],
+        "status": result["status"],
+        "ground_truth_file": ground_truth.get("file") or "",
+        "culprit_fqn": culprit["fqn"] if culprit else "",
+        "culprit_confidence": culprit["confidence"] if culprit else "",
+        "top1_fqn": top1.get("fqn", ""),
+        "top1_confidence": top1.get("confidence", ""),
+        "top1_suspiciousness": top1.get("suspiciousness", ""),
+        "top5_fqns": ";".join(c.get("fqn", "") for c in top_candidates[:5]),
+        "top5_confidences": ";".join(str(c.get("confidence", "")) for c in top_candidates[:5]),
+        "llm_calls": result.get("llm_calls", ""),
+        "node_count": node_count,
+        "edge_count": edge_count,
+        "recursion_limit": recursion_limit,
+        "confidence_threshold": confidence_threshold,
+        "reflection": (result.get("reflection", "") or "")[:500],
+        "has_patch": bool(result.get("final_diff")),
+        "agent_patch": result.get("final_diff", "") or "",
+        "ground_truth_patch": ground_truth.get("patch") or "",
+        "duration_s": result.get("duration_s", ""),
+        "error": result.get("error", "") or "",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    with open(csv_path, "a", newline="") as f:
+        writer: csv.DictWriter = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 if __name__ == "__main__":
-    # Specify the project and bug ID here
-    project_name = "tqdm"
-    bug_id = "1"
-    
+    project_name: str = "youtube-dl"
+    k: int = 3
+    bugsinpy_root: str = "datasets/BugsInPy"
+    experiments_dir: str = "experiments"
+    base_artifacts_dir: str = "artifacts"
+    recursion_limit: int = 100
+
     configure_logging(level="INFO")
 
-    run_bugsinpy_debugging(
-        project_name=project_name,
-        bug_id=bug_id,
-        bugsinpy_root="datasets/BugsInPy",
-        experiments_dir="experiments",
-        artifacts_dir="artifacts",
-        recursion_limit=100,
-    )
+    # Create a dedicated directory for this run
+    timestamp: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir: str = os.path.join(base_artifacts_dir, f"bugsinpy_{project_name}_k{k}_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Output CSV — one row per bug, written immediately after each instance
+    csv_path: str = os.path.join(run_dir, "results.csv")
+
+    print(f"\n{'='*60}")
+    print(f"  Running {k} bugs for project: {project_name}")
+    print(f"  Run directory: {run_dir}")
+    print(f"  CSV output: {csv_path}")
+    print(f"{'='*60}\n")
+
+    summary: Dict[str, int] = {"LOCALIZED": 0, "INCONCLUSIVE": 0, "CRASHED": 0, "FAILED": 0}
+
+    for i in range(1, k + 1):
+        bug_id: str = str(i)
+        print(f"\n>>> [{i}/{k}] Starting {project_name} bug #{bug_id} <<<\n")
+
+        result: Dict[str, Any] = run_bugsinpy_debugging(
+            project_name=project_name,
+            bug_id=bug_id,
+            bugsinpy_root=bugsinpy_root,
+            experiments_dir=experiments_dir,
+            artifacts_dir=run_dir,
+            recursion_limit=recursion_limit,
+        )
+
+        # Extract ground-truth info from the patch
+        ground_truth: Dict[str, Optional[str]] = parse_bug_patch(bugsinpy_root, project_name, bug_id)
+
+        # Count nodes/edges from the call graph if available
+        node_count: int = 0
+        edge_count: int = 0
+        call_graph_path: Path = Path(experiments_dir) / project_name / f"call_graph_{project_name}_{bug_id}.json"
+        if call_graph_path.exists():
+            with open(call_graph_path, "r") as f:
+                cg: Dict[str, Any] = json.load(f)
+            node_count = len(cg.get("nodes", []))
+            edge_count = len(cg.get("edges", []))
+
+        # Write to CSV immediately after this instance
+        append_result_to_csv(
+            csv_path=csv_path,
+            result=result,
+            ground_truth=ground_truth,
+            node_count=node_count,
+            edge_count=edge_count,
+            recursion_limit=recursion_limit,
+            confidence_threshold=CONFIDENCE_THRESHOLD,
+        )
+
+        status: str = result["status"]
+        summary[status] = summary.get(status, 0) + 1
+        print(f">>> [{i}/{k}] {project_name} bug #{bug_id}: {status}  (CSV updated) <<<\n")
+
+    # Final summary
+    print(f"\n{'='*60}")
+    print(f"  BATCH SUMMARY  ({k} bugs)")
+    print(f"{'='*60}")
+    for s, count in summary.items():
+        if count > 0:
+            print(f"  {s}: {count}")
+    print(f"  Results saved to: {csv_path}")
+    print(f"{'='*60}\n")

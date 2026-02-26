@@ -427,9 +427,11 @@ def generate_tests(state: DebuggingState) -> Dict[str, Any]:
     if not host_workspace:
         raise ValueError("host_workspace is required for generate_tests")
 
-    # 1. Enlist all tests (Search for test_*.py files)
-    test_files = []
-    for root, _, files in os.walk(host_workspace):
+    # 1. Enlist all tests (Search for test_*.py files, skip venvs and site-packages)
+    SKIP_DIRS: set = {"env", ".venv", "venv", "site-packages", "__pycache__", ".git", "node_modules"}
+    test_files: List[str] = []
+    for root, dirs, files in os.walk(host_workspace):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for file in files:
             if file.startswith("test_") and file.endswith(".py"):
                 test_files.append(os.path.join(root, file))
