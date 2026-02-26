@@ -327,7 +327,12 @@ def append_result_to_csv(
 
 if __name__ == "__main__":
     project_name: str = "youtube-dl"
-    k: int = 3
+    invalid_ids = [8]
+    end_limit = 10 # Max valid is 44
+    bug_ids_int = [str(num) for num in range(1, end_limit) if num not in invalid_ids]
+    print(bug_ids_int)
+    pass
+    bug_ids: List[str] = bug_ids_int
     bugsinpy_root: str = "datasets/BugsInPy"
     experiments_dir: str = "experiments"
     base_artifacts_dir: str = "artifacts"
@@ -337,23 +342,23 @@ if __name__ == "__main__":
 
     # Create a dedicated directory for this run
     timestamp: str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir: str = os.path.join(base_artifacts_dir, f"bugsinpy_{project_name}_k{k}_{timestamp}")
+    run_dir: str = os.path.join(base_artifacts_dir, f"bugsinpy_{project_name}_{len(bug_ids)}bugs_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
 
     # Output CSV — one row per bug, written immediately after each instance
     csv_path: str = os.path.join(run_dir, "results.csv")
 
     print(f"\n{'='*60}")
-    print(f"  Running {k} bugs for project: {project_name}")
+    print(f"  Running {len(bug_ids)} bugs for project: {project_name}")
+    print(f"  Bug IDs: {bug_ids}")
     print(f"  Run directory: {run_dir}")
     print(f"  CSV output: {csv_path}")
     print(f"{'='*60}\n")
 
     summary: Dict[str, int] = {"LOCALIZED": 0, "INCONCLUSIVE": 0, "CRASHED": 0, "FAILED": 0}
 
-    for i in range(1, k + 1):
-        bug_id: str = str(i)
-        print(f"\n>>> [{i}/{k}] Starting {project_name} bug #{bug_id} <<<\n")
+    for i, bug_id in enumerate(bug_ids):
+        print(f"\n>>> [{i+1}/{len(bug_ids)}] Starting {project_name} bug #{bug_id} <<<\n")
 
         result: Dict[str, Any] = run_bugsinpy_debugging(
             project_name=project_name,
@@ -390,11 +395,11 @@ if __name__ == "__main__":
 
         status: str = result["status"]
         summary[status] = summary.get(status, 0) + 1
-        print(f">>> [{i}/{k}] {project_name} bug #{bug_id}: {status}  (CSV updated) <<<\n")
+        print(f">>> [{i+1}/{len(bug_ids)}] {project_name} bug #{bug_id}: {status}  (CSV updated) <<<\n")
 
     # Final summary
     print(f"\n{'='*60}")
-    print(f"  BATCH SUMMARY  ({k} bugs)")
+    print(f"  BATCH SUMMARY  ({len(bug_ids)} bugs)")
     print(f"{'='*60}")
     for s, count in summary.items():
         if count > 0:

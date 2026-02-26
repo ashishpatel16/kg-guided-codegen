@@ -16,7 +16,7 @@ echo ""
 
 for project in "${PROJECTS[@]}"; do
   echo ">>> Starting: $project"
-  uv run python -m src.benchmarks.validate_bugsinpy_project "$project" --limit 10
+  uv run python -m src.benchmarks.validate_bugsinpy_project "$project" --limit 45
   echo ""
   echo ">>> Finished: $project"
   echo "---------------------------------------------"

@@ -234,7 +234,7 @@ def write_csv(rows: List[Dict[str, Any]], filepath: str) -> None:
 def validate_project(
     project_name: str,
     bugsinpy_root: str = "datasets/BugsInPy",
-    experiments_dir: str = "experiments",
+    experiments_dir: str = "experiments_validation",
     artifacts_dir: str = "artifacts",
     limit: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -293,7 +293,7 @@ if __name__ == "__main__":
         help="Path to BugsInPy dataset root",
     )
     parser.add_argument(
-        "--experiments-dir", default="experiments",
+        "--experiments-dir", default="experiments_validation",
         help="Working directory for checked-out projects",
     )
     parser.add_argument(
