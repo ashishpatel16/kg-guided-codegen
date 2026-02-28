@@ -28,6 +28,7 @@ dependencies = [
     "isort>=8.0.0",
     "jupyter>=1.1.1",
     "seaborn>=0.13.2",
+    "vulture>=2.14",
 ]
 
 [dependency-groups]
