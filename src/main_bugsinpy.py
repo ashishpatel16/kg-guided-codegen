@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -62,6 +63,7 @@ def run_bugsinpy_debugging(
     print(f"  BugsInPy Fault Localization: {project_name} #{bug_id}")
     print(f"{'='*60}\n")
 
+    host_root: Optional[str] = None
     try:
         with BugsInPyDockerSandbox(
             project_name,
@@ -110,7 +112,7 @@ def run_bugsinpy_debugging(
                 call_graph: Dict[str, Any] = json.load(f)
 
             container_root: str = bspy.container_project_root
-            host_root: str = os.path.abspath(bspy.host_experiments_dir / project_name)
+            host_root = os.path.abspath(bspy.host_experiments_dir / project_name)
 
             for node in call_graph.get("nodes", []):
                 file_path: str = node.get("file", "")
@@ -215,6 +217,17 @@ def run_bugsinpy_debugging(
         with open(result_path, "w") as f:
             json.dump(result, f, indent=2)
         print(f"  Results saved to {result_path}")
+
+        # Save confidence_evolution JSON if exists
+        try:
+            if host_root:
+                confidence_evolution_path = os.path.join(host_root, "confidence_evolution.json")
+                if os.path.exists(confidence_evolution_path):
+                    dest_path = os.path.join(artifacts_dir, f"{project_name}_{bug_id}_confidence_evolution.json")
+                    shutil.copy2(confidence_evolution_path, dest_path)
+                    print(f"  ✓ Confidence evolution saved to {dest_path}")
+        except Exception as e:
+            print(f"  ✗ Failed to copy confidence_evolution.json: {e}")
 
     return result
 
@@ -325,84 +338,161 @@ def append_result_to_csv(
         writer.writerow(row)
 
 
+def generate_baseline_call_graphs(project_name: str, bug_ids: List[str], bugsinpy_root: str = "datasets/BugsInPy"):
+    """
+    Sets up BugsinPy buggy versions for each bug ID, constructs the call graph,
+    and exports them to artifacts/call_graphs_bugsinpy_baseline directory.
+    Runs the docker sandbox in experiments_baseline folder.
+    """
+    experiments_dir = "experiments_baseline"
+    artifacts_dir = "artifacts/call_graphs_bugsinpy_baseline"
+    os.makedirs(artifacts_dir, exist_ok=True)
+    
+    print(f"Starting baseline call graph generation for {project_name} bugs: {bug_ids}")
+
+    for bug_id in bug_ids:
+        print(f"\n[{project_name} #{bug_id}] Starting...")
+        try:
+            with BugsInPyDockerSandbox(
+                project_name,
+                bug_id,
+                bugsinpy_root=bugsinpy_root,
+                experiments_dir=experiments_dir,
+            ) as bspy:
+                print(f"[{project_name} #{bug_id}] Checking out buggy version...")
+                exit_code, out, err = bspy.checkout(version=0)
+                if exit_code != 0:
+                    print(f"[{project_name} #{bug_id}] Checkout failed: {err}")
+                    continue
+                
+                print(f"[{project_name} #{bug_id}] Compiling...")
+                exit_code, out, err = bspy.compile(verbose=True)
+                if exit_code != 0:
+                    print(f"[{project_name} #{bug_id}] Compile failed: {err}")
+                    continue
+                
+                output_filename = f"call_graph_{project_name}_{bug_id}.json"
+                print(f"[{project_name} #{bug_id}] Running dynamic tracer...")
+                exit_code, out, err = bspy.run_dynamic_tracer(output_file=output_filename)
+                if exit_code != 0:
+                    print(f"[{project_name} #{bug_id}] Tracer failed: {err}")
+                    continue
+                
+                # Load & remap paths
+                print(f"[{project_name} #{bug_id}] Processing & exporting call graph...")
+                call_graph_path = bspy.host_experiments_dir / project_name / output_filename
+                
+                if not call_graph_path.exists():
+                    print(f"[{project_name} #{bug_id}] Call graph missing at {call_graph_path}")
+                    continue
+
+                with open(call_graph_path, "r") as f:
+                    call_graph = json.load(f)
+                    
+                container_root = bspy.container_project_root
+                host_root = os.path.abspath(bspy.host_experiments_dir / project_name)
+
+                for node in call_graph.get("nodes", []):
+                    file_path = node.get("file", "")
+                    if file_path.startswith(container_root):
+                        node["file"] = os.path.abspath(
+                            file_path.replace(container_root, host_root)
+                        )
+                
+                out_path = os.path.join(artifacts_dir, output_filename)
+                with open(out_path, "w") as f:
+                    json.dump(call_graph, f, indent=2)
+                    
+                print(f"[{project_name} #{bug_id}] Saved call graph to {out_path}")
+                
+        except Exception as e:
+            print(f"[{project_name} #{bug_id}] Exception occurred: {e}")
+            logger.exception(f"Exception for {project_name} #{bug_id}")
+
+    print("\nBaseline call graph generation finished.")
+
+
 if __name__ == "__main__":
-    project_name: str = "youtube-dl"
-    invalid_ids = [8]
-    end_limit = 10 # Max valid is 44
-    bug_ids_int = [str(num) for num in range(1, end_limit) if num not in invalid_ids]
-    print(bug_ids_int)
-    pass
-    bug_ids: List[str] = bug_ids_int
-    bugsinpy_root: str = "datasets/BugsInPy"
-    experiments_dir: str = "experiments"
-    base_artifacts_dir: str = "artifacts"
-    recursion_limit: int = 100
+    # project_name: str = "youtube-dl"
+    # invalid_ids = []
+    # end_limit = 10 # Max valid is 44
+    # bug_ids_int = [str(num) for num in range(1, end_limit) if num not in invalid_ids]
+    # print(bug_ids_int)
+    # pass
+    # bug_ids: List[str] = bug_ids_int
+    # bugsinpy_root: str = "datasets/BugsInPy"
+    # experiments_dir: str = "experiments"
+    # base_artifacts_dir: str = "testgen_artifacts"
+    # recursion_limit: int = 100
 
-    configure_logging(level="INFO")
+    # configure_logging(level="INFO")
 
-    # Create a dedicated directory for this run
-    timestamp: str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir: str = os.path.join(base_artifacts_dir, f"bugsinpy_{project_name}_{len(bug_ids)}bugs_{timestamp}")
-    os.makedirs(run_dir, exist_ok=True)
+    # # Create a dedicated directory for this run
+    # timestamp: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # run_dir: str = os.path.join(base_artifacts_dir, f"bugsinpy_{project_name}_{len(bug_ids)}bugs_{timestamp}")
+    # os.makedirs(run_dir, exist_ok=True)
 
-    # Output CSV — one row per bug, written immediately after each instance
-    csv_path: str = os.path.join(run_dir, "results.csv")
+    # # Output CSV — one row per bug, written immediately after each instance
+    # csv_path: str = os.path.join(run_dir, "results.csv")
 
-    print(f"\n{'='*60}")
-    print(f"  Running {len(bug_ids)} bugs for project: {project_name}")
-    print(f"  Bug IDs: {bug_ids}")
-    print(f"  Run directory: {run_dir}")
-    print(f"  CSV output: {csv_path}")
-    print(f"{'='*60}\n")
+    # print(f"\n{'='*60}")
+    # print(f"  Running {len(bug_ids)} bugs for project: {project_name}")
+    # print(f"  Bug IDs: {bug_ids}")
+    # print(f"  Run directory: {run_dir}")
+    # print(f"  CSV output: {csv_path}")
+    # print(f"{'='*60}\n")
 
-    summary: Dict[str, int] = {"LOCALIZED": 0, "INCONCLUSIVE": 0, "CRASHED": 0, "FAILED": 0}
+    # summary: Dict[str, int] = {"LOCALIZED": 0, "INCONCLUSIVE": 0, "CRASHED": 0, "FAILED": 0}
 
-    for i, bug_id in enumerate(bug_ids):
-        print(f"\n>>> [{i+1}/{len(bug_ids)}] Starting {project_name} bug #{bug_id} <<<\n")
+    # for i, bug_id in enumerate(bug_ids):
+    #     print(f"\n>>> [{i+1}/{len(bug_ids)}] Starting {project_name} bug #{bug_id} <<<\n")
 
-        result: Dict[str, Any] = run_bugsinpy_debugging(
-            project_name=project_name,
-            bug_id=bug_id,
-            bugsinpy_root=bugsinpy_root,
-            experiments_dir=experiments_dir,
-            artifacts_dir=run_dir,
-            recursion_limit=recursion_limit,
-        )
+    #     result: Dict[str, Any] = run_bugsinpy_debugging(
+    #         project_name=project_name,
+    #         bug_id=bug_id,
+    #         bugsinpy_root=bugsinpy_root,
+    #         experiments_dir=experiments_dir,
+    #         artifacts_dir=run_dir,
+    #         recursion_limit=recursion_limit,
+    #     )
 
-        # Extract ground-truth info from the patch
-        ground_truth: Dict[str, Optional[str]] = parse_bug_patch(bugsinpy_root, project_name, bug_id)
+    #     # Extract ground-truth info from the patch
+    #     ground_truth: Dict[str, Optional[str]] = parse_bug_patch(bugsinpy_root, project_name, bug_id)
 
-        # Count nodes/edges from the call graph if available
-        node_count: int = 0
-        edge_count: int = 0
-        call_graph_path: Path = Path(experiments_dir) / project_name / f"call_graph_{project_name}_{bug_id}.json"
-        if call_graph_path.exists():
-            with open(call_graph_path, "r") as f:
-                cg: Dict[str, Any] = json.load(f)
-            node_count = len(cg.get("nodes", []))
-            edge_count = len(cg.get("edges", []))
+    #     # Count nodes/edges from the call graph if available
+    #     node_count: int = 0
+    #     edge_count: int = 0
+    #     call_graph_path: Path = Path(experiments_dir) / project_name / f"call_graph_{project_name}_{bug_id}.json"
+    #     if call_graph_path.exists():
+    #         with open(call_graph_path, "r") as f:
+    #             cg: Dict[str, Any] = json.load(f)
+    #         node_count = len(cg.get("nodes", []))
+    #         edge_count = len(cg.get("edges", []))
 
-        # Write to CSV immediately after this instance
-        append_result_to_csv(
-            csv_path=csv_path,
-            result=result,
-            ground_truth=ground_truth,
-            node_count=node_count,
-            edge_count=edge_count,
-            recursion_limit=recursion_limit,
-            confidence_threshold=CONFIDENCE_THRESHOLD,
-        )
+    #     # Write to CSV immediately after this instance
+    #     append_result_to_csv(
+    #         csv_path=csv_path,
+    #         result=result,
+    #         ground_truth=ground_truth,
+    #         node_count=node_count,
+    #         edge_count=edge_count,
+    #         recursion_limit=recursion_limit,
+    #         confidence_threshold=CONFIDENCE_THRESHOLD,
+    #     )
 
-        status: str = result["status"]
-        summary[status] = summary.get(status, 0) + 1
-        print(f">>> [{i+1}/{len(bug_ids)}] {project_name} bug #{bug_id}: {status}  (CSV updated) <<<\n")
+    #     status: str = result["status"]
+    #     summary[status] = summary.get(status, 0) + 1
+    #     print(f">>> [{i+1}/{len(bug_ids)}] {project_name} bug #{bug_id}: {status}  (CSV updated) <<<\n")
 
-    # Final summary
-    print(f"\n{'='*60}")
-    print(f"  BATCH SUMMARY  ({len(bug_ids)} bugs)")
-    print(f"{'='*60}")
-    for s, count in summary.items():
-        if count > 0:
-            print(f"  {s}: {count}")
-    print(f"  Results saved to: {csv_path}")
-    print(f"{'='*60}\n")
+    # # Final summary
+    # print(f"\n{'='*60}")
+    # print(f"  BATCH SUMMARY  ({len(bug_ids)} bugs)")
+    # print(f"{'='*60}")
+    # for s, count in summary.items():
+    #     if count > 0:
+    #         print(f"  {s}: {count}")
+    # print(f"  Results saved to: {csv_path}")
+    # print(f"{'='*60}\n")
+
+    bug_ids = [str(i+1) for i in range(43)]
+    generate_baseline_call_graphs(project_name="youtube-dl", bug_ids=bug_ids)

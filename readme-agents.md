@@ -1,4 +1,4 @@
-# EQUISA: Extended Multi-Agent Framework for Debugging and Patching
+# Multi-Agent Framework for Debugging and Patching
 
 This document describes the proposed extension of the fault localization agent into a full-loop debugging and patching system. The architecture is organized as three named loops orchestrated by cooperating agents.
 

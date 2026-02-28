@@ -1,17 +1,10 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "matplotlib",
-# ]
-# ///
-
 import json
 import matplotlib.pyplot as plt
 import argparse
 import sys
 
 def main():
-    conf_file = "/Users/ashish/master-thesis/kg-guided-codegen/experiments/youtube-dl/confidence_evolution.json"
+    conf_file = "/Users/ashish/master-thesis/kg-guided-codegen/testgen_artifacts/bugsinpy_youtube-dl_1bugs_20260226_095501/youtube-dl_1_confidence_evolution.json"
     parser = argparse.ArgumentParser(description="Visualize confidence evolution.")
     parser.add_argument("--input", "-i", type=str, default=conf_file, help="Path to confidence_evolution.json")
     parser.add_argument("--output", "-o", type=str, default="confidence_evolution.png", help="Output plot image file")

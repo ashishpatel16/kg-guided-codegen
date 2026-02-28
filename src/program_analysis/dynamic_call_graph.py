@@ -274,7 +274,6 @@ class DynamicCallGraphTracer:
         # TODO: Currently only interested in recording the function call and funciton return events. Ignored events include: Line and Exception.
         """
         fqn, meta = self._frame_to_fqn_and_meta(frame)
-        self._logger.info(f"Tracing frame with fqn: {fqn}, event: {event} arg: {arg}")
         if fqn is None or meta is None:
             return None
 

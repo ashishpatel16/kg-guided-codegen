@@ -15,3 +15,8 @@ experiments/
 src/benchmarks/exp
 .agent/
 experiments_validation/
+testgen_artifacts/
+condensation_artifacts/
+confidence_evolution.png
+proposal.md
+notebooks/

@@ -1,5 +1,5 @@
 {
-  "model_choice": "gemini-3-pro-preview",
+  "model_choice": "gemini-2.0-flash",
   "max_improvements": 2,
   "similarity_comparison_count": 10,
   "max_tests": 25
