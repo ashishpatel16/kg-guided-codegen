@@ -3,7 +3,9 @@ from langchain_ollama import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Optional, Dict, Any
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class OllamaLLMConnector:
     """
@@ -150,14 +152,10 @@ if __name__ == "__main__":
     # Demo usage
     print("--- LangChain Connector ---")
     try:
-        llm = OllamaLLMConnector(model_name="gemma3:12b", temperature=0.0)
+        OLLAMA_IP = os.environ.get("OLLAMA_HOMELAB_IP")
+        print(OLLAMA_IP)
+        llm = RawOllamaConnector(model_name="llama3.2:latest", temperature=0.0, base_url=f"http://{OLLAMA_IP}:11434")
         response = llm.generate(query)
         print(response)
     except Exception as e:
         print(f"LangChain connector error: {e}")
-
-    # print("\n--- Raw Connector ---")
-    # raw_llm = RawOllamaConnector(model_name="gemma3:12b", temperature=0.0, base_url="http://100.84.103.5:11434")
-    # # To run this, ensure you have ollama running
-    # response = raw_llm.generate("hi")
-    # print(response)

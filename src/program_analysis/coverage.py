@@ -1,6 +1,5 @@
 import networkx as nx
 from typing import Dict, List, Set, Optional, Any
-from src.program_analysis.repo_call_graph import build_static_call_graph
 class CoverageAnalyzer:
     """
     Analyzes test coverage and code suspiciousness based on a call graph.

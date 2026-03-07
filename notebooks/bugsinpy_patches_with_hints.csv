@@ -1,0 +1,1367 @@
+,bug_patch.txt,run_test.sh,hints
+32,"diff --git a/youtube_dl/extractor/npo.py b/youtube_dl/extractor/npo.py
+index f36d446d2..ce31694a5 100644
+--- a/youtube_dl/extractor/npo.py
++++ b/youtube_dl/extractor/npo.py
+@@ -7,6 +7,7 @@ from ..utils import (
+     unified_strdate,
+     parse_duration,
+     qualities,
++    strip_jsonp,
+     url_basename,
+ )
+ 
+@@ -63,7 +64,7 @@ class NPOIE(InfoExtractor):
+             'http://e.omroep.nl/metadata/aflevering/%s' % video_id,
+             video_id,
+             # We have to remove the javascript callback
+-            transform_source=lambda j: re.sub(r'parseMetadata\((.*?)\);\n//.*$', r'\1', j)
++            transform_source=strip_jsonp,
+         )
+         token_page = self._download_webpage(
+             'http://ida.omroep.nl/npoplayer/i.js',
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 0b2ba39e2..5786fa699 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1331,7 +1331,8 @@ def parse_age_limit(s):
+ 
+ 
+ def strip_jsonp(code):
+-    return re.sub(r'(?s)^[a-zA-Z0-9_]+\s*\(\s*(.*)\);?\s*?\s*$', r'\1', code)
++    return re.sub(
++        r'(?s)^[a-zA-Z0-9_]+\s*\(\s*(.*)\);?\s*?(?://[^\n]*)*$', r'\1', code)
+ 
+ 
+ def js_to_json(code):
+","python -m unittest -q test.test_utils.TestUtil.test_strip_jsonp
+","['from ..utils import (', 'class NPOIE(InfoExtractor):', 'def parse_age_limit(s):']"
+35,"diff --git a/youtube_dl/extractor/arte.py b/youtube_dl/extractor/arte.py
+index 957d35979..c3d02f85e 100644
+--- a/youtube_dl/extractor/arte.py
++++ b/youtube_dl/extractor/arte.py
+@@ -86,11 +86,15 @@ class ArteTVPlus7IE(InfoExtractor):
+         info = self._download_json(json_url, video_id)
+         player_info = info['videoJsonPlayer']
+ 
++        upload_date_str = player_info.get('shootingDate')
++        if not upload_date_str:
++            upload_date_str = player_info.get('VDA', '').split(' ')[0]
++
+         info_dict = {
+             'id': player_info['VID'],
+             'title': player_info['VTI'],
+             'description': player_info.get('VDE'),
+-            'upload_date': unified_strdate(player_info.get('VDA', '').split(' ')[0]),
++            'upload_date': unified_strdate(upload_date_str),
+             'thumbnail': player_info.get('programImage') or player_info.get('VTU', {}).get('IUR'),
+         }
+ 
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 950cd1a7a..f05747097 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -890,6 +890,7 @@ def unified_strdate(date_str):
+         '%d/%m/%Y',
+         '%d/%m/%y',
+         '%Y/%m/%d %H:%M:%S',
++        '%d/%m/%Y %H:%M:%S',
+         '%Y-%m-%d %H:%M:%S',
+         '%d.%m.%Y %H:%M',
+         '%d.%m.%Y %H.%M',
+","python -m unittest -q test.test_utils.TestUtil.test_unified_dates
+","['class ArteTVPlus7IE(InfoExtractor):', 'def unified_strdate(date_str):']"
+34,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index f05747097..59851a8c0 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -673,6 +673,8 @@ class ExtractorError(Exception):
+             expected = True
+         if video_id is not None:
+             msg = video_id + ': ' + msg
++        if cause:
++            msg += u' (caused by %r)' % cause
+         if not expected:
+             msg = msg + u'; please report this issue on https://yt-dl.org/bug . Be sure to call youtube-dl with the --verbose flag and include its complete output. Make sure you are using the latest version; type  youtube-dl -U  to update.'
+         super(ExtractorError, self).__init__(msg)
+@@ -1598,7 +1600,9 @@ def js_to_json(code):
+             ([{,]\s*)
+             (""[^""]*""|\'[^\']*\'|[a-z0-9A-Z]+)
+             (:\s*)
+-            ([0-9.]+|true|false|""[^""]*""|\'[^\']*\'|\[|\{)
++            ([0-9.]+|true|false|""[^""]*""|\'[^\']*\'|
++                (?=\[|\{)
++            )
+         ''', fix_kv, code)
+     res = re.sub(r',(\s*\])', lambda m: m.group(1), res)
+     return res
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json
+","['class ExtractorError(Exception):', 'def js_to_json(code):']"
+33,"diff --git a/youtube_dl/extractor/drtv.py b/youtube_dl/extractor/drtv.py
+index 9d6ce1f48..93b3c9f36 100644
+--- a/youtube_dl/extractor/drtv.py
++++ b/youtube_dl/extractor/drtv.py
+@@ -1,7 +1,5 @@
+ from __future__ import unicode_literals
+ 
+-import re
+-
+ from .subtitles import SubtitlesInfoExtractor
+ from .common import ExtractorError
+ from ..utils import parse_iso8601
+@@ -25,8 +23,7 @@ class DRTVIE(SubtitlesInfoExtractor):
+     }
+ 
+     def _real_extract(self, url):
+-        mobj = re.match(self._VALID_URL, url)
+-        video_id = mobj.group('id')
++        video_id = self._match_id(url)
+ 
+         programcard = self._download_json(
+             'http://www.dr.dk/mu/programcard/expanded/%s' % video_id, video_id, 'Downloading video JSON')
+@@ -35,7 +32,7 @@ class DRTVIE(SubtitlesInfoExtractor):
+ 
+         title = data['Title']
+         description = data['Description']
+-        timestamp = parse_iso8601(data['CreatedTime'][:-5])
++        timestamp = parse_iso8601(data['CreatedTime'])
+ 
+         thumbnail = None
+         duration = None
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 6c0c39ca5..2864e5142 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -925,7 +925,7 @@ def parse_iso8601(date_str, delimiter='T'):
+         return None
+ 
+     m = re.search(
+-        r'Z$| ?(?P<sign>\+|-)(?P<hours>[0-9]{2}):?(?P<minutes>[0-9]{2})$',
++        r'(\.[0-9]+)?(?:Z$| ?(?P<sign>\+|-)(?P<hours>[0-9]{2}):?(?P<minutes>[0-9]{2})$)',
+         date_str)
+     if not m:
+         timezone = datetime.timedelta()
+@@ -938,7 +938,7 @@ def parse_iso8601(date_str, delimiter='T'):
+             timezone = datetime.timedelta(
+                 hours=sign * int(m.group('hours')),
+                 minutes=sign * int(m.group('minutes')))
+-    date_format =  '%Y-%m-%d{0}%H:%M:%S'.format(delimiter)
++    date_format = '%Y-%m-%d{0}%H:%M:%S'.format(delimiter)
+     dt = datetime.datetime.strptime(date_str, date_format) - timezone
+     return calendar.timegm(dt.timetuple())
+ 
+","python -m unittest -q test.test_utils.TestUtil.test_parse_iso8601
+","[None, 'class DRTVIE(SubtitlesInfoExtractor):', 'class DRTVIE(SubtitlesInfoExtractor):', ""def parse_iso8601(date_str, delimiter='T'):"", ""def parse_iso8601(date_str, delimiter='T'):""]"
+20,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 39860e9d1..fdf5e29e7 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -365,9 +365,9 @@ def get_elements_by_attribute(attribute, value, html, escape_value=True):
+     retlist = []
+     for m in re.finditer(r'''(?xs)
+         <([a-zA-Z0-9:._-]+)
+-         (?:\s+[a-zA-Z0-9:._-]+(?:=[a-zA-Z0-9:._-]*|=""[^""]*""|='[^']*'))*?
++         (?:\s+[a-zA-Z0-9:._-]+(?:=[a-zA-Z0-9:._-]*|=""[^""]*""|='[^']*'|))*?
+          \s+%s=['""]?%s['""]?
+-         (?:\s+[a-zA-Z0-9:._-]+(?:=[a-zA-Z0-9:._-]*|=""[^""]*""|='[^']*'))*?
++         (?:\s+[a-zA-Z0-9:._-]+(?:=[a-zA-Z0-9:._-]*|=""[^""]*""|='[^']*'|))*?
+         \s*>
+         (?P<content>.*?)
+         </\1>
+","python -m unittest -q test.test_utils.TestUtil.test_get_element_by_attribute
+","['def get_elements_by_attribute(attribute, value, html, escape_value=True):']"
+18,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index 89c07be29..f94836d06 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -860,7 +860,7 @@ class YoutubeDL(object):
+ 
+             force_properties = dict(
+                 (k, v) for k, v in ie_result.items() if v is not None)
+-            for f in ('_type', 'url', 'ie_key'):
++            for f in ('_type', 'url', 'id', 'extractor', 'extractor_key', 'ie_key'):
+                 if f in force_properties:
+                     del force_properties[f]
+             new_result = info.copy()
+","python -m unittest -q test.test_YoutubeDL.TestYoutubeDL.test_do_not_override_ie_key_in_url_transparent
+",['class YoutubeDL(object):']
+27,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index ee20c3d9b..5b396ede8 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1982,9 +1982,9 @@ def parse_dfxp_time_expr(time_expr):
+     if mobj:
+         return float(mobj.group('time_offset'))
+ 
+-    mobj = re.match(r'^(\d+):(\d\d):(\d\d(?:\.\d+)?)$', time_expr)
++    mobj = re.match(r'^(\d+):(\d\d):(\d\d(?:(?:\.|:)\d+)?)$', time_expr)
+     if mobj:
+-        return 3600 * int(mobj.group(1)) + 60 * int(mobj.group(2)) + float(mobj.group(3))
++        return 3600 * int(mobj.group(1)) + 60 * int(mobj.group(2)) + float(mobj.group(3).replace(':', '.'))
+ 
+ 
+ def srt_subtitles_timecode(seconds):
+","python -m unittest -q test.test_utils.TestUtil.test_parse_dfxp_time_expr
+",['def parse_dfxp_time_expr(time_expr):']
+9,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index e5b46f87e..5deb4848e 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -931,7 +931,7 @@ class YoutubeDL(object):
+                 else:
+                     filter_parts.append(string)
+ 
+-        def _parse_format_selection(tokens, endwith=[]):
++        def _parse_format_selection(tokens, inside_merge=False, inside_choice=False, inside_group=False):
+             selectors = []
+             current_selector = None
+             for type, string, start, _, _ in tokens:
+@@ -941,18 +941,23 @@ class YoutubeDL(object):
+                 elif type in [tokenize.NAME, tokenize.NUMBER]:
+                     current_selector = FormatSelector(SINGLE, string, [])
+                 elif type == tokenize.OP:
+-                    if string in endwith:
++                    if string == ')':
++                        if not inside_group:
++                            # ')' will be handled by the parentheses group
++                            tokens.restore_last_token()
+                         break
+-                    elif string == ')':
+-                        # ')' will be handled by the parentheses group
++                    elif inside_merge and string in ['/', ',']:
+                         tokens.restore_last_token()
+                         break
+-                    if string == ',':
++                    elif inside_choice and string == ',':
++                        tokens.restore_last_token()
++                        break
++                    elif string == ',':
+                         selectors.append(current_selector)
+                         current_selector = None
+                     elif string == '/':
+                         first_choice = current_selector
+-                        second_choice = _parse_format_selection(tokens, [','])
++                        second_choice = _parse_format_selection(tokens, inside_choice=True)
+                         current_selector = None
+                         selectors.append(FormatSelector(PICKFIRST, (first_choice, second_choice), []))
+                     elif string == '[':
+@@ -963,12 +968,12 @@ class YoutubeDL(object):
+                     elif string == '(':
+                         if current_selector:
+                             raise syntax_error('Unexpected ""(""', start)
+-                        current_selector = FormatSelector(GROUP, _parse_format_selection(tokens, [')']), [])
++                        group = _parse_format_selection(tokens, inside_group=True)
++                        current_selector = FormatSelector(GROUP, group, [])
+                     elif string == '+':
+                         video_selector = current_selector
+-                        audio_selector = _parse_format_selection(tokens, [','])
+-                        current_selector = None
+-                        selectors.append(FormatSelector(MERGE, (video_selector, audio_selector), []))
++                        audio_selector = _parse_format_selection(tokens, inside_merge=True)
++                        current_selector = FormatSelector(MERGE, (video_selector, audio_selector), [])
+                     else:
+                         raise syntax_error('Operator not recognized: ""{0}""'.format(string), start)
+                 elif type == tokenize.ENDMARKER:
+","python -m unittest -q test.test_YoutubeDL.TestFormatSelection.test_youtube_format_selection
+","['class YoutubeDL(object):', 'class YoutubeDL(object):', 'class YoutubeDL(object):']"
+11,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index b14603d8a..328f037a8 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -3519,8 +3519,8 @@ def str_or_none(v, default=None):
+ 
+ def str_to_int(int_str):
+     """""" A more relaxed version of int_or_none """"""
+-    if int_str is None:
+-        return None
++    if not isinstance(int_str, compat_str):
++        return int_str
+     int_str = re.sub(r'[,\.\+]', '', int_str)
+     return int(int_str)
+ 
+","python -m unittest -q test.test_utils.TestUtil.test_str_to_int
+","['def str_or_none(v, default=None):']"
+7,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index db5b3698e..a61e47646 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1701,8 +1701,8 @@ def js_to_json(code):
+         if v in ('true', 'false', 'null'):
+             return v
+         if v.startswith('""'):
+-            return v
+-        if v.startswith(""'""):
++            v = re.sub(r""\\'"", ""'"", v[1:-1])
++        elif v.startswith(""'""):
+             v = v[1:-1]
+             v = re.sub(r""\\\\|\\'|\"""", lambda m: {
+                 '\\\\': '\\\\',
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_realworld
+",['def js_to_json(code):']
+29,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 7b3f79141..d39f313a4 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -911,7 +911,8 @@ def unified_strdate(date_str, day_first=True):
+         timetuple = email.utils.parsedate_tz(date_str)
+         if timetuple:
+             upload_date = datetime.datetime(*timetuple[:6]).strftime('%Y%m%d')
+-    return compat_str(upload_date)
++    if upload_date is not None:
++        return compat_str(upload_date)
+ 
+ 
+ def determine_ext(url, default_ext='unknown_video'):
+","python -m unittest -q test.test_utils.TestUtil.test_unified_dates
+","['def unified_strdate(date_str, day_first=True):']"
+16,"diff --git a/youtube_dl/postprocessor/ffmpeg.py b/youtube_dl/postprocessor/ffmpeg.py
+index 51256a3fb..f71d413b5 100644
+--- a/youtube_dl/postprocessor/ffmpeg.py
++++ b/youtube_dl/postprocessor/ffmpeg.py
+@@ -585,7 +585,7 @@ class FFmpegSubtitlesConvertorPP(FFmpegPostProcessor):
+                 dfxp_file = old_file
+                 srt_file = subtitles_filename(filename, lang, 'srt')
+ 
+-                with io.open(dfxp_file, 'rt', encoding='utf-8') as f:
++                with open(dfxp_file, 'rb') as f:
+                     srt_data = dfxp2srt(f.read())
+ 
+                 with io.open(srt_file, 'wt', encoding='utf-8') as f:
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 9e4492d40..b724e0b70 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2572,14 +2572,18 @@ def srt_subtitles_timecode(seconds):
+ 
+ 
+ def dfxp2srt(dfxp_data):
++    '''
++    @param dfxp_data A bytes-like object containing DFXP data
++    @returns A unicode object containing converted SRT data
++    '''
+     LEGACY_NAMESPACES = (
+-        ('http://www.w3.org/ns/ttml', [
+-            'http://www.w3.org/2004/11/ttaf1',
+-            'http://www.w3.org/2006/04/ttaf1',
+-            'http://www.w3.org/2006/10/ttaf1',
++        (b'http://www.w3.org/ns/ttml', [
++            b'http://www.w3.org/2004/11/ttaf1',
++            b'http://www.w3.org/2006/04/ttaf1',
++            b'http://www.w3.org/2006/10/ttaf1',
+         ]),
+-        ('http://www.w3.org/ns/ttml#styling', [
+-            'http://www.w3.org/ns/ttml#style',
++        (b'http://www.w3.org/ns/ttml#styling', [
++            b'http://www.w3.org/ns/ttml#style',
+         ]),
+     )
+ 
+@@ -2674,7 +2678,7 @@ def dfxp2srt(dfxp_data):
+         for ns in v:
+             dfxp_data = dfxp_data.replace(ns, k)
+ 
+-    dfxp = compat_etree_fromstring(dfxp_data.encode('utf-8'))
++    dfxp = compat_etree_fromstring(dfxp_data)
+     out = []
+     paras = dfxp.findall(_x('.//ttml:p')) or dfxp.findall('.//p')
+ 
+","python -m unittest -q test.test_utils.TestUtil.test_dfxp2srt
+","['class FFmpegSubtitlesConvertorPP(FFmpegPostProcessor):', 'def srt_subtitles_timecode(seconds):', 'def dfxp2srt(dfxp_data):']"
+42,"diff --git a/youtube_dl/extractor/clipsyndicate.py b/youtube_dl/extractor/clipsyndicate.py
+index c60089ad3..9ab6a4ab6 100644
+--- a/youtube_dl/extractor/clipsyndicate.py
++++ b/youtube_dl/extractor/clipsyndicate.py
+@@ -3,7 +3,7 @@ import re
+ from .common import InfoExtractor
+ from ..utils import (
+     find_xpath_attr,
+-    fix_xml_all_ampersand,
++    fix_xml_ampersands
+ )
+ 
+ 
+@@ -33,7 +33,7 @@ class ClipsyndicateIE(InfoExtractor):
+         pdoc = self._download_xml(
+             'http://eplayer.clipsyndicate.com/osmf/playlist?%s' % flvars,
+             video_id, u'Downloading video info',
+-            transform_source=fix_xml_all_ampersand) 
++            transform_source=fix_xml_ampersands)
+ 
+         track_doc = pdoc.find('trackList/track')
+         def find_param(name):
+diff --git a/youtube_dl/extractor/metacritic.py b/youtube_dl/extractor/metacritic.py
+index f3ff0e8bb..465ac4916 100644
+--- a/youtube_dl/extractor/metacritic.py
++++ b/youtube_dl/extractor/metacritic.py
+@@ -4,7 +4,7 @@ import re
+ 
+ from .common import InfoExtractor
+ from ..utils import (
+-    fix_xml_all_ampersand,
++    fix_xml_ampersands,
+ )
+ 
+ 
+@@ -27,7 +27,7 @@ class MetacriticIE(InfoExtractor):
+         webpage = self._download_webpage(url, video_id)
+         # The xml is not well formatted, there are raw '&'
+         info = self._download_xml('http://www.metacritic.com/video_data?video=' + video_id,
+-            video_id, 'Downloading info xml', transform_source=fix_xml_all_ampersand)
++            video_id, 'Downloading info xml', transform_source=fix_xml_ampersands)
+ 
+         clip = next(c for c in info.findall('playList/clip') if c.find('id').text == video_id)
+         formats = []
+diff --git a/youtube_dl/extractor/mtv.py b/youtube_dl/extractor/mtv.py
+index f1cf41e2d..c4fa16fb6 100644
+--- a/youtube_dl/extractor/mtv.py
++++ b/youtube_dl/extractor/mtv.py
+@@ -5,6 +5,7 @@ from .common import InfoExtractor
+ from ..utils import (
+     compat_urllib_parse,
+     ExtractorError,
++    fix_xml_ampersands,
+ )
+ 
+ def _media_xml_tag(tag):
+@@ -83,12 +84,9 @@ class MTVServicesInfoExtractor(InfoExtractor):
+         video_id = self._id_from_uri(uri)
+         data = compat_urllib_parse.urlencode({'uri': uri})
+ 
+-        def fix_ampersand(s):
+-            """""" Fix unencoded ampersand in XML """"""
+-            return s.replace(u'& ', '&amp; ')
+         idoc = self._download_xml(
+             self._FEED_URL + '?' + data, video_id,
+-            u'Downloading info', transform_source=fix_ampersand)
++            u'Downloading info', transform_source=fix_xml_ampersands)
+         return [self._get_video_info(item) for item in idoc.findall('.//item')]
+ 
+ 
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 73fe1ad0a..70f284149 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1092,9 +1092,12 @@ def month_by_name(name):
+         return None
+ 
+ 
+-def fix_xml_all_ampersand(xml_str):
++def fix_xml_ampersands(xml_str):
+     """"""Replace all the '&' by '&amp;' in XML""""""
+-    return xml_str.replace(u'&', u'&amp;')
++    return re.sub(
++        r'&(?!amp;|lt;|gt;|apos;|quot;|#x[0-9a-fA-F]{,4};|#[0-9]{,4};)',
++        u'&amp;',
++        xml_str)
+ 
+ 
+ def setproctitle(title):
+","python -m unittest -q test.test_utils.TestUtil.test_fix_xml_ampersands
+","['import re', 'class ClipsyndicateIE(InfoExtractor):', 'import re', 'class MetacriticIE(InfoExtractor):', 'from .common import InfoExtractor', 'class MTVServicesInfoExtractor(InfoExtractor):', 'def month_by_name(name):']"
+6,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 91917fc96..ee20c3d9b 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1976,7 +1976,7 @@ def match_filter_func(filter_str):
+ 
+ def parse_dfxp_time_expr(time_expr):
+     if not time_expr:
+-        return 0.0
++        return
+ 
+     mobj = re.match(r'^(?P<time_offset>\d+(?:\.\d+)?)s?$', time_expr)
+     if mobj:
+@@ -2020,10 +2020,15 @@ def dfxp2srt(dfxp_data):
+         raise ValueError('Invalid dfxp/TTML subtitle')
+ 
+     for para, index in zip(paras, itertools.count(1)):
+-        begin_time = parse_dfxp_time_expr(para.attrib['begin'])
++        begin_time = parse_dfxp_time_expr(para.attrib.get('begin'))
+         end_time = parse_dfxp_time_expr(para.attrib.get('end'))
++        dur = parse_dfxp_time_expr(para.attrib.get('dur'))
++        if begin_time is None:
++            continue
+         if not end_time:
+-            end_time = begin_time + parse_dfxp_time_expr(para.attrib['dur'])
++            if not dur:
++                continue
++            end_time = begin_time + dur
+         out.append('%d\n%s --> %s\n%s\n\n' % (
+             index,
+             srt_subtitles_timecode(begin_time),
+","python -m unittest -q test.test_utils.TestUtil.test_parse_dfxp_time_expr
+","['def match_filter_func(filter_str):', 'def dfxp2srt(dfxp_data):']"
+28,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index d39f313a4..b7013a6aa 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -396,7 +396,11 @@ def _htmlentity_transform(entity):
+             numstr = '0%s' % numstr
+         else:
+             base = 10
+-        return compat_chr(int(numstr, base))
++        # See https://github.com/rg3/youtube-dl/issues/7518
++        try:
++            return compat_chr(int(numstr, base))
++        except ValueError:
++            pass
+ 
+     # Unknown entity in name, return its literal representation
+     return ('&%s;' % entity)
+","python -m unittest -q test.test_utils.TestUtil.test_unescape_html
+",['def _htmlentity_transform(entity):']
+17,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index fdf5e29e7..c9cbd5842 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2733,6 +2733,8 @@ def cli_option(params, command_option, param):
+ 
+ def cli_bool_option(params, command_option, param, true_value='true', false_value='false', separator=None):
+     param = params.get(param)
++    if param is None:
++        return []
+     assert isinstance(param, bool)
+     if separator:
+         return [command_option + separator + (true_value if param else false_value)]
+","python -m unittest -q test.test_utils.TestUtil.test_cli_bool_option
+","['def cli_option(params, command_option, param):']"
+1,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 027d12785..574284e94 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2574,8 +2574,8 @@ def _match_one(filter_part, dct):
+         return op(actual_value, comparison_value)
+ 
+     UNARY_OPERATORS = {
+-        '': lambda v: v is not None,
+-        '!': lambda v: v is None,
++        '': lambda v: (v is True) if isinstance(v, bool) else (v is not None),
++        '!': lambda v: (v is False) if isinstance(v, bool) else (v is None),
+     }
+     operator_rex = re.compile(r'''(?x)\s*
+         (?P<op>%s)\s*(?P<key>[a-z_]+)
+","python -m unittest -q test.test_utils.TestUtil.test_match_str
+","['def _match_one(filter_part, dct):']"
+10,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 3eb6bc6d4..4358137a0 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1560,8 +1560,8 @@ def js_to_json(code):
+         return '""%s""' % v
+ 
+     res = re.sub(r'''(?x)
+-        ""(?:[^""\\]*(?:\\\\|\\"")?)*""|
+-        '(?:[^'\\]*(?:\\\\|\\')?)*'|
++        ""(?:[^""\\]*(?:\\\\|\\['""nu]))*[^""\\]*""|
++        '(?:[^'\\]*(?:\\\\|\\['""nu]))*[^'\\]*'|
+         [a-zA-Z_][.a-zA-Z_0-9]*
+         ''', fix_kv, code)
+     res = re.sub(r',(\s*\])', lambda m: m.group(1), res)
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_realworld
+",['def js_to_json(code):']
+19,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index 60ee4b7d8..8730d32ef 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -20,6 +20,7 @@ import re
+ import shutil
+ import subprocess
+ import socket
++import string
+ import sys
+ import time
+ import tokenize
+@@ -674,7 +675,19 @@ class YoutubeDL(object):
+                         FORMAT_RE.format(numeric_field),
+                         r'%({0})s'.format(numeric_field), outtmpl)
+ 
+-            filename = expand_path(outtmpl % template_dict)
++            # expand_path translates '%%' into '%' and '$$' into '$'
++            # correspondingly that is not what we want since we need to keep
++            # '%%' intact for template dict substitution step. Working around
++            # with boundary-alike separator hack.
++            sep = ''.join([random.choice(string.ascii_letters) for _ in range(32)])
++            outtmpl = outtmpl.replace('%%', '%{0}%'.format(sep)).replace('$$', '${0}$'.format(sep))
++
++            # outtmpl should be expand_path'ed before template dict substitution
++            # because meta fields may contain env variables we don't want to
++            # be expanded. For example, for outtmpl ""%(title)s.%(ext)s"" and
++            # title ""Hello $PATH"", we don't want `$PATH` to be expanded.
++            filename = expand_path(outtmpl).replace(sep, '') % template_dict
++
+             # Temporary fix for #4787
+             # 'Treat' all problem characters by passing filename through preferredencoding
+             # to workaround encoding issues with subprocess on python2 @ Windows
+","python -m unittest -q test.test_YoutubeDL.TestYoutubeDL.test_prepare_filename
+","['import re', 'class YoutubeDL(object):']"
+26,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index c8308ba3a..82f67f6cd 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1970,7 +1970,7 @@ def js_to_json(code):
+         '(?:[^'\\]*(?:\\\\|\\['""nurtbfx/\n]))*[^'\\]*'|
+         /\*.*?\*/|,(?=\s*[\]}])|
+         [a-zA-Z_][.a-zA-Z_0-9]*|
+-        (?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\s*:)?|
++        \b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\s*:)?|
+         [0-9]+(?=\s*:)
+         ''', fix_kv, code)
+ 
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_realworld
+",['def js_to_json(code):']
+8,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index 5deb4848e..5a79e5f1d 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -958,8 +958,7 @@ class YoutubeDL(object):
+                     elif string == '/':
+                         first_choice = current_selector
+                         second_choice = _parse_format_selection(tokens, inside_choice=True)
+-                        current_selector = None
+-                        selectors.append(FormatSelector(PICKFIRST, (first_choice, second_choice), []))
++                        current_selector = FormatSelector(PICKFIRST, (first_choice, second_choice), [])
+                     elif string == '[':
+                         if not current_selector:
+                             current_selector = FormatSelector(SINGLE, 'best', [])
+","python -m unittest -q test.test_YoutubeDL.TestFormatSelection.test_youtube_format_selection
+",['class YoutubeDL(object):']
+21,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 8738aa249..d293c7498 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1748,11 +1748,16 @@ def base_url(url):
+ 
+ 
+ def urljoin(base, path):
++    if isinstance(path, bytes):
++        path = path.decode('utf-8')
+     if not isinstance(path, compat_str) or not path:
+         return None
+     if re.match(r'^(?:https?:)?//', path):
+         return path
+-    if not isinstance(base, compat_str) or not re.match(r'^(?:https?:)?//', base):
++    if isinstance(base, bytes):
++        base = base.decode('utf-8')
++    if not isinstance(base, compat_str) or not re.match(
++            r'^(?:https?:)?//', base):
+         return None
+     return compat_urlparse.urljoin(base, path)
+ 
+","python -m unittest -q test.test_utils.TestUtil.test_urljoin
+",['def base_url(url):']
+43,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index a249c7ec1..2d12e2df9 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1087,7 +1087,7 @@ def remove_start(s, start):
+ 
+ 
+ def url_basename(url):
+-    m = re.match(r'(?:https?:|)//[^/]+/(?:[^/?#]+/)?([^/?#]+)/?(?:[?#]|$)', url)
++    m = re.match(r'(?:https?:|)//[^/]+/(?:[^?#]+/)?([^/?#]+)/?(?:[?#]|$)', url)
+     if not m:
+         return u''
+     return m.group(1)
+","python -m unittest -q test.test_utils.TestUtil.test_url_basename
+","['def remove_start(s, start):']"
+38,"diff --git a/youtube_dl/extractor/facebook.py b/youtube_dl/extractor/facebook.py
+index f6b5f589a..848a2c263 100644
+--- a/youtube_dl/extractor/facebook.py
++++ b/youtube_dl/extractor/facebook.py
+@@ -11,6 +11,7 @@ from ..utils import (
+     compat_urllib_error,
+     compat_urllib_parse,
+     compat_urllib_request,
++    urlencode_postdata,
+ 
+     ExtractorError,
+ )
+@@ -51,8 +52,8 @@ class FacebookIE(InfoExtractor):
+ 
+         login_page_req = compat_urllib_request.Request(self._LOGIN_URL)
+         login_page_req.add_header('Cookie', 'locale=en_US')
+-        self.report_login()
+-        login_page = self._download_webpage(login_page_req, None, note=False,
++        login_page = self._download_webpage(login_page_req, None,
++            note='Downloading login page',
+             errnote='Unable to download login page')
+         lsd = self._search_regex(
+             r'<input type=""hidden"" name=""lsd"" value=""([^""]*)""',
+@@ -70,23 +71,25 @@ class FacebookIE(InfoExtractor):
+             'timezone': '-60',
+             'trynum': '1',
+             }
+-        request = compat_urllib_request.Request(self._LOGIN_URL, compat_urllib_parse.urlencode(login_form))
++        request = compat_urllib_request.Request(self._LOGIN_URL, urlencode_postdata(login_form))
+         request.add_header('Content-Type', 'application/x-www-form-urlencoded')
+         try:
+-            login_results = compat_urllib_request.urlopen(request).read()
++            login_results = self._download_webpage(request, None,
++                note='Logging in', errnote='unable to fetch login page')
+             if re.search(r'<form(.*)name=""login""(.*)</form>', login_results) is not None:
+                 self._downloader.report_warning('unable to log in: bad username/password, or exceded login rate limit (~3/min). Check credentials or wait.')
+                 return
+ 
+             check_form = {
+-                'fb_dtsg': self._search_regex(r'""fb_dtsg"":""(.*?)""', login_results, 'fb_dtsg'),
++                'fb_dtsg': self._search_regex(r'name=""fb_dtsg"" value=""(.+?)""', login_results, 'fb_dtsg'),
+                 'nh': self._search_regex(r'name=""nh"" value=""(\w*?)""', login_results, 'nh'),
+                 'name_action_selected': 'dont_save',
+-                'submit[Continue]': self._search_regex(r'<input value=""(.*?)"" name=""submit\[Continue\]""', login_results, 'continue'),
++                'submit[Continue]': self._search_regex(r'<button[^>]+value=""(.*?)""[^>]+name=""submit\[Continue\]""', login_results, 'continue'),
+             }
+-            check_req = compat_urllib_request.Request(self._CHECKPOINT_URL, compat_urllib_parse.urlencode(check_form))
++            check_req = compat_urllib_request.Request(self._CHECKPOINT_URL, urlencode_postdata(check_form))
+             check_req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+-            check_response = compat_urllib_request.urlopen(check_req).read()
++            check_response = self._download_webpage(check_req, None,
++                note='Confirming login')
+             if re.search(r'id=""checkpointSubmitButton""', check_response) is not None:
+                 self._downloader.report_warning('Unable to confirm login, you have to login in your brower and authorize the login.')
+         except (compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 02b8f7c45..d4abd4031 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1263,3 +1263,7 @@ def read_batch_urls(batch_fd):
+ 
+     with contextlib.closing(batch_fd) as fd:
+         return [url for url in map(fixup, fd) if url]
++
++
++def urlencode_postdata(*args, **kargs):
++    return compat_urllib_parse.urlencode(*args, **kargs).encode('ascii')
+","python -m unittest -q test.test_utils.TestUtil.test_urlencode_postdata
+","['from ..utils import (', 'class FacebookIE(InfoExtractor):', 'class FacebookIE(InfoExtractor):', 'def read_batch_urls(batch_fd):']"
+36,"diff --git a/youtube_dl/extractor/facebook.py b/youtube_dl/extractor/facebook.py
+index f0cd8f156..f7cf700b5 100644
+--- a/youtube_dl/extractor/facebook.py
++++ b/youtube_dl/extractor/facebook.py
+@@ -20,7 +20,7 @@ from ..utils import (
+ class FacebookIE(InfoExtractor):
+     _VALID_URL = r'''(?x)
+         https?://(?:\w+\.)?facebook\.com/
+-        (?:[^#?]*\#!/)?
++        (?:[^#]*?\#!/)?
+         (?:video/video\.php|photo\.php|video/embed)\?(?:.*?)
+         (?:v|video_id)=(?P<id>[0-9]+)
+         (?:.*)'''
+","python -m unittest -q test.test_all_urls.TestAllURLsMatching.test_facebook_matching
+",['from ..utils import (']
+31,"diff --git a/youtube_dl/extractor/minhateca.py b/youtube_dl/extractor/minhateca.py
+index 077c9b19d..14934b7ec 100644
+--- a/youtube_dl/extractor/minhateca.py
++++ b/youtube_dl/extractor/minhateca.py
+@@ -8,6 +8,7 @@ from ..compat import (
+ )
+ from ..utils import (
+     int_or_none,
++    parse_duration,
+     parse_filesize,
+ )
+ 
+@@ -52,8 +53,8 @@ class MinhatecaIE(InfoExtractor):
+         filesize_approx = parse_filesize(self._html_search_regex(
+             r'<p class=""fileSize"">(.*?)</p>',
+             webpage, 'file size approximation', fatal=False))
+-        duration = int_or_none(self._html_search_regex(
+-            r'(?s)<p class=""fileLeng[ht][th]"">.*?([0-9]+)\s*s',
++        duration = parse_duration(self._html_search_regex(
++            r'(?s)<p class=""fileLeng[ht][th]"">.*?class=""bold"">(.*?)<',
+             webpage, 'duration', fatal=False))
+         view_count = int_or_none(self._html_search_regex(
+             r'<p class=""downloadsCounter"">([0-9]+)</p>',
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 5e9ae7a42..5efb4c59a 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1206,18 +1206,29 @@ def parse_duration(s):
+ 
+     m = re.match(
+         r'''(?ix)T?
++        (?:
++            (?P<only_mins>[0-9.]+)\s*(?:mins?|minutes?)\s*|
++            (?P<only_hours>[0-9.]+)\s*(?:hours?)|
++
+             (?:
+                 (?:(?P<hours>[0-9]+)\s*(?:[:h]|hours?)\s*)?
+                 (?P<mins>[0-9]+)\s*(?:[:m]|mins?|minutes?)\s*
+             )?
+-            (?P<secs>[0-9]+)(?P<ms>\.[0-9]+)?\s*(?:s|secs?|seconds?)?$''', s)
++            (?P<secs>[0-9]+)(?P<ms>\.[0-9]+)?\s*(?:s|secs?|seconds?)?
++        )$''', s)
+     if not m:
+         return None
+-    res = int(m.group('secs'))
++    res = 0
++    if m.group('only_mins'):
++        return float_or_none(m.group('only_mins'), invscale=60)
++    if m.group('only_hours'):
++        return float_or_none(m.group('only_hours'), invscale=60 * 60)
++    if m.group('secs'):
++        res += int(m.group('secs'))
+     if m.group('mins'):
+         res += int(m.group('mins')) * 60
+-        if m.group('hours'):
+-            res += int(m.group('hours')) * 60 * 60
++    if m.group('hours'):
++        res += int(m.group('hours')) * 60 * 60
+     if m.group('ms'):
+         res += float(m.group('ms'))
+     return res
+","python -m unittest -q test.test_utils.TestUtil.test_parse_duration
+","['from ..compat import (', 'class MinhatecaIE(InfoExtractor):', 'def parse_duration(s):']"
+30,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index 5a79e5f1d..6478d05dc 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -1005,6 +1005,9 @@ class YoutubeDL(object):
+                 format_spec = selector.selector
+ 
+                 def selector_function(formats):
++                    formats = list(formats)
++                    if not formats:
++                        return
+                     if format_spec == 'all':
+                         for f in formats:
+                             yield f
+","python -m unittest -q test.test_YoutubeDL.TestFormatSelection.test_format_filtering
+",['class YoutubeDL(object):']
+37,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 5f1f664c8..92fee966f 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2,6 +2,7 @@
+ # -*- coding: utf-8 -*-
+ 
+ import calendar
++import codecs
+ import contextlib
+ import ctypes
+ import datetime
+@@ -1263,9 +1264,11 @@ class PagedList(object):
+ 
+ 
+ def uppercase_escape(s):
++    unicode_escape = codecs.getdecoder('unicode_escape')
+     return re.sub(
+         r'\\U[0-9a-fA-F]{8}',
+-        lambda m: m.group(0).decode('unicode-escape'), s)
++        lambda m: unicode_escape(m.group(0))[0],
++        s)
+ 
+ try:
+     struct.pack(u'!I', 0)
+","python -m unittest -q test.test_utils.TestUtil.test_uppercase_escpae
+","[None, 'class PagedList(object):']"
+39,"diff --git a/youtube_dl/extractor/facebook.py b/youtube_dl/extractor/facebook.py
+index d675a939d..60e68d98a 100644
+--- a/youtube_dl/extractor/facebook.py
++++ b/youtube_dl/extractor/facebook.py
+@@ -12,8 +12,8 @@ from ..utils import (
+     compat_urllib_parse,
+     compat_urllib_request,
+     urlencode_postdata,
+-
+     ExtractorError,
++    limit_length,
+ )
+ 
+ 
+@@ -37,6 +37,14 @@ class FacebookIE(InfoExtractor):
+             'duration': 38,
+             'title': 'Did you know Kei Nishikori is the first Asian man to ever reach a Grand Slam fin...',
+         }
++    }, {
++        'note': 'Video without discernible title',
++        'url': 'https://www.facebook.com/video.php?v=274175099429670',
++        'info_dict': {
++            'id': '274175099429670',
++            'ext': 'mp4',
++            'title': 'Facebook video #274175099429670',
++        }
+     }, {
+         'url': 'https://www.facebook.com/video.php?v=10204634152394104',
+         'only_matching': True,
+@@ -131,8 +139,7 @@ class FacebookIE(InfoExtractor):
+             video_title = self._html_search_regex(
+                 r'(?s)<span class=""fbPhotosPhotoCaption"".*?id=""fbPhotoPageCaption""><span class=""hasCaption"">(.*?)</span>',
+                 webpage, 'alternative title', default=None)
+-            if len(video_title) > 80 + 3:
+-                video_title = video_title[:80] + '...'
++            video_title = limit_length(video_title, 80)
+         if not video_title:
+             video_title = 'Facebook video #%s' % video_id
+ 
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 247788078..3ac0f1f54 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1571,3 +1571,13 @@ except AttributeError:
+         if ret:
+             raise subprocess.CalledProcessError(ret, p.args, output=output)
+         return output
++
++
++def limit_length(s, length):
++    """""" Add ellipses to overly long strings """"""
++    if s is None:
++        return None
++    ELLIPSES = '...'
++    if len(s) > length:
++        return s[:length - len(ELLIPSES)] + ELLIPSES
++    return s
+","python -m unittest -q test.test_utils.TestUtil.test_limit_length
+","['from ..utils import (', 'class FacebookIE(InfoExtractor):', 'class FacebookIE(InfoExtractor):', 'except AttributeError:']"
+41,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index fa8f80e02..67c6af507 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -756,9 +756,9 @@ def unified_strdate(date_str):
+     """"""Return a string with the date in the format YYYYMMDD""""""
+     upload_date = None
+     #Replace commas
+-    date_str = date_str.replace(',',' ')
++    date_str = date_str.replace(',', ' ')
+     # %z (UTC offset) is only supported in python>=3.2
+-    date_str = re.sub(r' ?(\+|-)[0-9:]*$', '', date_str)
++    date_str = re.sub(r' ?(\+|-)[0-9]{2}:?[0-9]{2}$', '', date_str)
+     format_expressions = [
+         '%d %B %Y',
+         '%B %d %Y',
+","python -m unittest -q test.test_utils.TestUtil.test_unified_dates
+",['def unified_strdate(date_str):']
+24,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 2770c5f1c..1a5ce8688 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2345,11 +2345,18 @@ def _match_one(filter_part, dct):
+     m = operator_rex.search(filter_part)
+     if m:
+         op = COMPARISON_OPERATORS[m.group('op')]
+-        if m.group('strval') is not None:
++        actual_value = dct.get(m.group('key'))
++        if (m.group('strval') is not None or
++            # If the original field is a string and matching comparisonvalue is
++            # a number we should respect the origin of the original field
++            # and process comparison value as a string (see
++            # https://github.com/rg3/youtube-dl/issues/11082).
++            actual_value is not None and m.group('intval') is not None and
++                isinstance(actual_value, compat_str)):
+             if m.group('op') not in ('=', '!='):
+                 raise ValueError(
+                     'Operator %s does not support string values!' % m.group('op'))
+-            comparison_value = m.group('strval')
++            comparison_value = m.group('strval') or m.group('intval')
+         else:
+             try:
+                 comparison_value = int(m.group('intval'))
+@@ -2361,7 +2368,6 @@ def _match_one(filter_part, dct):
+                     raise ValueError(
+                         'Invalid integer value %r in filter part %r' % (
+                             m.group('intval'), filter_part))
+-        actual_value = dct.get(m.group('key'))
+         if actual_value is None:
+             return m.group('none_inclusive')
+         return op(actual_value, comparison_value)
+","python -m unittest -q test.test_YoutubeDL.TestYoutubeDL.test_match_filter
+","['def _match_one(filter_part, dct):', 'def _match_one(filter_part, dct):']"
+23,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index cf46711b9..6c462625b 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2107,7 +2107,7 @@ def js_to_json(code):
+         v = m.group(0)
+         if v in ('true', 'false', 'null'):
+             return v
+-        elif v.startswith('/*') or v == ',':
++        elif v.startswith('/*') or v.startswith('//') or v == ',':
+             return """"
+ 
+         if v[0] in (""'"", '""'):
+@@ -2134,7 +2134,7 @@ def js_to_json(code):
+     return re.sub(r'''(?sx)
+         ""(?:[^""\\]*(?:\\\\|\\['""nurtbfx/\n]))*[^""\\]*""|
+         '(?:[^'\\]*(?:\\\\|\\['""nurtbfx/\n]))*[^'\\]*'|
+-        /\*.*?\*/|,(?=\s*[\]}])|
++        /\*.*?\*/|//[^\n]*|,(?=\s*[\]}])|
+         [a-zA-Z_][.a-zA-Z_0-9]*|
+         \b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\s*:)?|
+         [0-9]+(?=\s*:)
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_edgecases
+","['def js_to_json(code):', 'def js_to_json(code):']"
+4,"diff --git a/youtube_dl/jsinterp.py b/youtube_dl/jsinterp.py
+index 9737f7002..a8df4aef0 100644
+--- a/youtube_dl/jsinterp.py
++++ b/youtube_dl/jsinterp.py
+@@ -198,12 +198,12 @@ class JSInterpreter(object):
+             return opfunc(x, y)
+ 
+         m = re.match(
+-            r'^(?P<func>%s)\((?P<args>[a-zA-Z0-9_$,]+)\)$' % _NAME_RE, expr)
++            r'^(?P<func>%s)\((?P<args>[a-zA-Z0-9_$,]*)\)$' % _NAME_RE, expr)
+         if m:
+             fname = m.group('func')
+             argvals = tuple([
+                 int(v) if v.isdigit() else local_vars[v]
+-                for v in m.group('args').split(',')])
++                for v in m.group('args').split(',')]) if len(m.group('args')) > 0 else tuple()
+             if fname not in self._functions:
+                 self._functions[fname] = self.extract_function(fname)
+             return self._functions[fname](argvals)
+","python -m unittest -q test.test_jsinterp.TestJSInterpreter.test_call
+",['class JSInterpreter(object):']
+15,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 386897a85..2fe9cf585 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2267,7 +2267,7 @@ def js_to_json(code):
+         ""(?:[^""\\]*(?:\\\\|\\['""nurtbfx/\n]))*[^""\\]*""|
+         '(?:[^'\\]*(?:\\\\|\\['""nurtbfx/\n]))*[^'\\]*'|
+         {comment}|,(?={skip}[\]}}])|
+-        [a-zA-Z_][.a-zA-Z_0-9]*|
++        (?:(?<![0-9])[eE]|[a-df-zA-DF-Z_])[.a-zA-Z_0-9]*|
+         \b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:{skip}:)?|
+         [0-9]+(?={skip}:)
+         '''.format(comment=COMMENT_RE, skip=SKIP_RE), fix_kv, code)
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_edgecases test.test_utils.TestUtil.test_js_to_json_realworld
+",['def js_to_json(code):']
+3,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index c9cbd5842..2554a2abd 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -596,7 +596,7 @@ def unescapeHTML(s):
+     assert type(s) == compat_str
+ 
+     return re.sub(
+-        r'&([^;]+;)', lambda m: _htmlentity_transform(m.group(1)), s)
++        r'&([^&;]+;)', lambda m: _htmlentity_transform(m.group(1)), s)
+ 
+ 
+ def get_subprocess_encoding():
+","python -m unittest -q test.test_utils.TestUtil.test_unescape_html
+",['def unescapeHTML(s):']
+12,"diff --git a/youtube_dl/YoutubeDL.py b/youtube_dl/YoutubeDL.py
+index a827414dc..80ed8d7e5 100755
+--- a/youtube_dl/YoutubeDL.py
++++ b/youtube_dl/YoutubeDL.py
+@@ -1078,7 +1078,7 @@ class YoutubeDL(object):
+                 comparison_value = m.group('value')
+                 str_op = STR_OPERATORS[m.group('op')]
+                 if m.group('negation'):
+-                    op = lambda attr, value: not str_op
++                    op = lambda attr, value: not str_op(attr, value)
+                 else:
+                     op = str_op
+ 
+","python -m unittest -q test.test_YoutubeDL.TestFormatSelection.test_format_selection_string_ops
+",['class YoutubeDL(object):']
+40,"diff --git a/youtube_dl/downloader/f4m.py b/youtube_dl/downloader/f4m.py
+index 9a6c03556..052751106 100644
+--- a/youtube_dl/downloader/f4m.py
++++ b/youtube_dl/downloader/f4m.py
+@@ -4,13 +4,14 @@ import base64
+ import io
+ import itertools
+ import os
+-from struct import unpack, pack
+ import time
+ import xml.etree.ElementTree as etree
+ 
+ from .common import FileDownloader
+ from .http import HttpFD
+ from ..utils import (
++    struct_pack,
++    struct_unpack,
+     compat_urllib_request,
+     compat_urlparse,
+     format_bytes,
+@@ -27,13 +28,13 @@ class FlvReader(io.BytesIO):
+ 
+     # Utility functions for reading numbers and strings
+     def read_unsigned_long_long(self):
+-        return unpack('!Q', self.read(8))[0]
++        return struct_unpack('!Q', self.read(8))[0]
+ 
+     def read_unsigned_int(self):
+-        return unpack('!I', self.read(4))[0]
++        return struct_unpack('!I', self.read(4))[0]
+ 
+     def read_unsigned_char(self):
+-        return unpack('!B', self.read(1))[0]
++        return struct_unpack('!B', self.read(1))[0]
+ 
+     def read_string(self):
+         res = b''
+@@ -196,7 +197,7 @@ def write_flv_header(stream, metadata):
+     # Script data
+     stream.write(b'\x12')
+     # Size of the metadata with 3 bytes
+-    stream.write(pack('!L', len(metadata))[1:])
++    stream.write(struct_pack('!L', len(metadata))[1:])
+     stream.write(b'\x00\x00\x00\x00\x00\x00\x00')
+     stream.write(metadata)
+     # Magic numbers extracted from the output files produced by AdobeHDS.php
+diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 67c6af507..dd03f058f 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -17,6 +17,7 @@ import platform
+ import re
+ import ssl
+ import socket
++import struct
+ import subprocess
+ import sys
+ import traceback
+@@ -1220,3 +1221,20 @@ def uppercase_escape(s):
+     return re.sub(
+         r'\\U([0-9a-fA-F]{8})',
+         lambda m: compat_chr(int(m.group(1), base=16)), s)
++
++try:
++    struct.pack(u'!I', 0)
++except TypeError:
++    # In Python 2.6 (and some 2.7 versions), struct requires a bytes argument
++    def struct_pack(spec, *args):
++        if isinstance(spec, compat_str):
++            spec = spec.encode('ascii')
++        return struct.pack(spec, *args)
++
++    def struct_unpack(spec, *args):
++        if isinstance(spec, compat_str):
++            spec = spec.encode('ascii')
++        return struct.unpack(spec, *args)
++else:
++    struct_pack = struct.pack
++    struct_unpack = struct.unpack
+","python -m unittest -q test.test_utils.TestUtil.test_struct_unpack
+","['import base64', 'class FlvReader(io.BytesIO):', 'def write_flv_header(stream, metadata):', 'import platform', 'def uppercase_escape(s):']"
+2,"diff --git a/youtube_dl/extractor/common.py b/youtube_dl/extractor/common.py
+index 3b79b8cb4..35d427eec 100644
+--- a/youtube_dl/extractor/common.py
++++ b/youtube_dl/extractor/common.py
+@@ -2007,16 +2007,14 @@ class InfoExtractor(object):
+                                     f['url'] = initialization_url
+                                 f['fragments'].append({location_key(initialization_url): initialization_url})
+                             f['fragments'].extend(representation_ms_info['fragments'])
+-                        try:
+-                            existing_format = next(
+-                                fo for fo in formats
+-                                if fo['format_id'] == representation_id)
+-                        except StopIteration:
+-                            full_info = formats_dict.get(representation_id, {}).copy()
+-                            full_info.update(f)
+-                            formats.append(full_info)
+-                        else:
+-                            existing_format.update(f)
++                        # According to [1, 5.3.5.2, Table 7, page 35] @id of Representation
++                        # is not necessarily unique within a Period thus formats with
++                        # the same `format_id` are quite possible. There are numerous examples
++                        # of such manifests (see https://github.com/rg3/youtube-dl/issues/15111,
++                        # https://github.com/rg3/youtube-dl/issues/13919)
++                        full_info = formats_dict.get(representation_id, {}).copy()
++                        full_info.update(f)
++                        formats.append(full_info)
+                     else:
+                         self.report_warning('Unknown MIME type %s in DASH manifest' % mime_type)
+         return formats
+","python -m unittest -q test.test_InfoExtractor.TestInfoExtractor.test_parse_mpd_formats
+",['class InfoExtractor(object):']
+13,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index d2d3c1a9f..d0cb65814 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1868,7 +1868,7 @@ def urljoin(base, path):
+         path = path.decode('utf-8')
+     if not isinstance(path, compat_str) or not path:
+         return None
+-    if re.match(r'^(?:https?:)?//', path):
++    if re.match(r'^(?:[a-zA-Z][a-zA-Z0-9+-.]*:)?//', path):
+         return path
+     if isinstance(base, bytes):
+         base = base.decode('utf-8')
+","python -m unittest -q test.test_utils.TestUtil.test_urljoin
+","['def urljoin(base, path):']"
+5,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index f5cd6819b..97ddd9883 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -1101,7 +1101,7 @@ def unified_timestamp(date_str, day_first=True):
+ 
+     date_str = date_str.replace(',', ' ')
+ 
+-    pm_delta = datetime.timedelta(hours=12 if re.search(r'(?i)PM', date_str) else 0)
++    pm_delta = 12 if re.search(r'(?i)PM', date_str) else 0
+     timezone, date_str = extract_timezone(date_str)
+ 
+     # Remove AM/PM + timezone
+@@ -1109,13 +1109,13 @@ def unified_timestamp(date_str, day_first=True):
+ 
+     for expression in date_formats(day_first):
+         try:
+-            dt = datetime.datetime.strptime(date_str, expression) - timezone + pm_delta
++            dt = datetime.datetime.strptime(date_str, expression) - timezone + datetime.timedelta(hours=pm_delta)
+             return calendar.timegm(dt.timetuple())
+         except ValueError:
+             pass
+     timetuple = email.utils.parsedate_tz(date_str)
+     if timetuple:
+-        return calendar.timegm(timetuple.timetuple())
++        return calendar.timegm(timetuple) + pm_delta * 3600
+ 
+ 
+ def determine_ext(url, default_ext='unknown_video'):
+","python -m unittest -q test.test_utils.TestUtil.test_unified_timestamps
+","['def unified_timestamp(date_str, day_first=True):', 'def unified_timestamp(date_str, day_first=True):']"
+14,"diff --git a/youtube_dl/extractor/youtube.py b/youtube_dl/extractor/youtube.py
+index fec17987b..54ec76db5 100644
+--- a/youtube_dl/extractor/youtube.py
++++ b/youtube_dl/extractor/youtube.py
+@@ -1652,8 +1652,63 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
+         video_id = mobj.group(2)
+         return video_id
+ 
++    def _extract_chapters_from_json(self, webpage, video_id, duration):
++        if not webpage:
++            return
++        player = self._parse_json(
++            self._search_regex(
++                r'RELATED_PLAYER_ARGS[""\']\s*:\s*({.+})\s*,?\s*\n', webpage,
++                'player args', default='{}'),
++            video_id, fatal=False)
++        if not player or not isinstance(player, dict):
++            return
++        watch_next_response = player.get('watch_next_response')
++        if not isinstance(watch_next_response, compat_str):
++            return
++        response = self._parse_json(watch_next_response, video_id, fatal=False)
++        if not response or not isinstance(response, dict):
++            return
++        chapters_list = try_get(
++            response,
++            lambda x: x['playerOverlays']
++                       ['playerOverlayRenderer']
++                       ['decoratedPlayerBarRenderer']
++                       ['decoratedPlayerBarRenderer']
++                       ['playerBar']
++                       ['chapteredPlayerBarRenderer']
++                       ['chapters'],
++            list)
++        if not chapters_list:
++            return
++
++        def chapter_time(chapter):
++            return float_or_none(
++                try_get(
++                    chapter,
++                    lambda x: x['chapterRenderer']['timeRangeStartMillis'],
++                    int),
++                scale=1000)
++        chapters = []
++        for next_num, chapter in enumerate(chapters_list, start=1):
++            start_time = chapter_time(chapter)
++            if start_time is None:
++                continue
++            end_time = (chapter_time(chapters_list[next_num])
++                        if next_num < len(chapters_list) else duration)
++            if end_time is None:
++                continue
++            title = try_get(
++                chapter, lambda x: x['chapterRenderer']['title']['simpleText'],
++                compat_str)
++            chapters.append({
++                'start_time': start_time,
++                'end_time': end_time,
++                'title': title,
++            })
++        return chapters
++
+     @staticmethod
+-    def _extract_chapters(description, duration):
++    def _extract_chapters_from_description(description, duration):
+         if not description:
+             return None
+         chapter_lines = re.findall(
+@@ -1687,6 +1742,10 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
+             })
+         return chapters
+ 
++    def _extract_chapters(self, webpage, description, video_id, duration):
++        return (self._extract_chapters_from_json(webpage, video_id, duration)
++                or self._extract_chapters_from_description(description, duration))
++
+     def _real_extract(self, url):
+         url, smuggled_data = unsmuggle_url(url, {})
+ 
+@@ -2324,7 +2383,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
+                     errnote='Unable to download video annotations', fatal=False,
+                     data=urlencode_postdata({xsrf_field_name: xsrf_token}))
+ 
+-        chapters = self._extract_chapters(description_original, video_duration)
++        chapters = self._extract_chapters(video_webpage, description_original, video_id, video_duration)
+ 
+         # Look for the DASH manifest
+         if self._downloader.params.get('youtube_include_dash_manifest', True):
+","python -m unittest -q test.test_youtube_chapters.TestYoutubeChapters.test_youtube_chapters
+","['class YoutubeIE(YoutubeBaseInfoExtractor):', 'class YoutubeIE(YoutubeBaseInfoExtractor):', 'class YoutubeIE(YoutubeBaseInfoExtractor):']"
+22,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 1279a9042..07c07be6f 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2383,6 +2383,7 @@ def _match_one(filter_part, dct):
+         \s*(?P<op>%s)(?P<none_inclusive>\s*\?)?\s*
+         (?:
+             (?P<intval>[0-9.]+(?:[kKmMgGtTpPeEzZyY]i?[Bb]?)?)|
++            (?P<quote>[""\'])(?P<quotedstrval>(?:\\.|(?!(?P=quote)|\\).)+?)(?P=quote)|
+             (?P<strval>(?![0-9.])[a-z0-9A-Z]*)
+         )
+         \s*$
+@@ -2391,7 +2392,8 @@ def _match_one(filter_part, dct):
+     if m:
+         op = COMPARISON_OPERATORS[m.group('op')]
+         actual_value = dct.get(m.group('key'))
+-        if (m.group('strval') is not None or
++        if (m.group('quotedstrval') is not None or
++            m.group('strval') is not None or
+             # If the original field is a string and matching comparisonvalue is
+             # a number we should respect the origin of the original field
+             # and process comparison value as a string (see
+@@ -2401,7 +2403,10 @@ def _match_one(filter_part, dct):
+             if m.group('op') not in ('=', '!='):
+                 raise ValueError(
+                     'Operator %s does not support string values!' % m.group('op'))
+-            comparison_value = m.group('strval') or m.group('intval')
++            comparison_value = m.group('quotedstrval') or m.group('strval') or m.group('intval')
++            quote = m.group('quote')
++            if quote is not None:
++                comparison_value = comparison_value.replace(r'\%s' % quote, quote)
+         else:
+             try:
+                 comparison_value = int(m.group('intval'))
+","python -m unittest -q test.test_YoutubeDL.TestYoutubeDL.test_match_filter
+","['def _match_one(filter_part, dct):', 'def _match_one(filter_part, dct):', 'def _match_one(filter_part, dct):']"
+25,"diff --git a/youtube_dl/utils.py b/youtube_dl/utils.py
+index 35362e767..0c36c1b80 100644
+--- a/youtube_dl/utils.py
++++ b/youtube_dl/utils.py
+@@ -2038,14 +2038,14 @@ def js_to_json(code):
+             }.get(m.group(0), m.group(0)), v[1:-1])
+ 
+         INTEGER_TABLE = (
+-            (r'^0[xX][0-9a-fA-F]+', 16),
+-            (r'^0+[0-7]+', 8),
++            (r'^(0[xX][0-9a-fA-F]+)\s*:?$', 16),
++            (r'^(0+[0-7]+)\s*:?$', 8),
+         )
+ 
+         for regex, base in INTEGER_TABLE:
+             im = re.match(regex, v)
+             if im:
+-                i = int(im.group(0), base)
++                i = int(im.group(1), base)
+                 return '""%d"":' % i if v.endswith(':') else '%d' % i
+ 
+         return '""%s""' % v
+","python -m unittest -q test.test_utils.TestUtil.test_js_to_json_realworld
+",['def js_to_json(code):']
