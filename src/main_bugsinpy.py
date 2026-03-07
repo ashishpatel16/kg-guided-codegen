@@ -494,5 +494,5 @@ if __name__ == "__main__":
     # print(f"  Results saved to: {csv_path}")
     # print(f"{'='*60}\n")
 
-    bug_ids = [str(i+1) for i in range(43)]
+    bug_ids = [4]
     generate_baseline_call_graphs(project_name="youtube-dl", bug_ids=bug_ids)
